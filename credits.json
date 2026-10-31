@@ -1,0 +1,81 @@
+{
+  "remixOf" : [
+    {
+      "commit" : "f7e57636dda8f1c786913da6568d27c54fb27a41",
+      "name" : "New York",
+      "starter" : "newyork",
+      "url" : "https://github.com/lampdotdev/newyork"
+    },
+    {
+      "commit" : "be6932e776980eee55a802c7c665ea434360fa28",
+      "name" : "Go To Ann Arbor",
+      "url" : "https://github.com/mrubens/go-to-ann-arbor",
+      "wish" : "3DF4E397-D414-4837-8390-3F7946A6D12D"
+    }
+  ],
+  "upstream" : [
+    {
+      "author" : "Mr.doob",
+      "commit" : "13dd142b480bcfa01a6b18e36127c87e41cb4d80",
+      "license" : "MIT",
+      "licenseFile" : "Web/LICENSE-slop-newyork",
+      "name" : "Slop New York",
+      "url" : "https://github.com/mrdoob/slop-newyork"
+    },
+    {
+      "author" : "OpenStreetMap contributors",
+      "license" : "ODbL-1.0",
+      "name" : "Map data",
+      "url" : "https://www.openstreetmap.org/copyright"
+    },
+    {
+      "author" : "City of New York",
+      "license" : "LicenseRef-NYC-Open-Data",
+      "name" : "NYC Open Data",
+      "url" : "https://opendata.cityofnewyork.us/overview/#termsofuse"
+    },
+    {
+      "author" : "Mapzen, USGS",
+      "license" : "LicenseRef-USGS-Public-Domain",
+      "name" : "Terrain Tiles",
+      "url" : "https://registry.opendata.aws/terrain-tiles/"
+    },
+    {
+      "author" : "Metropolitan Transportation Authority",
+      "license" : "LicenseRef-NY-Open-Data",
+      "name" : "MTA Subway Entrances and Exits",
+      "url" : "https://data.ny.gov/Transportation/MTA-Subway-Entrances-and-Exits-2024/i9wp-a4ja"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "AAGIS Building Footprints",
+      "url" : "https://ckan.a2gov.org/dataset/building-footprints"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "Street Trees",
+      "url" : "https://a2gov.org/services/data-catalog"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "2023 Impervious Surfaces",
+      "url" : "https://a2maps.a2gov.org/a2arcgis/rest/services/ImperviousSurfaces/MapServer/7"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "Urban Tree Canopy",
+      "url" : "https://a2maps.a2gov.org/a2arcgis/rest/services/NaturalFeatures/MapServer/10"
+    },
+    {
+      "author" : "National Weather Service (NOAA)",
+      "license" : "LicenseRef-US-Government-Public-Domain",
+      "name" : "Current weather at Ann Arbor Municipal Airport (KARB)",
+      "url" : "https://www.weather.gov/documentation/services-web-api"
+    },
+    {
+      "author" : "Ann Arbor Area Transportation Authority (TheRide)",
+      "name" : "TheRide GTFS timetable",
+      "url" : "https://www.theride.org/business/software-developers"
+    }
+  ]
+}

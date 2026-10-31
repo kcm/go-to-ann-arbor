@@ -1,0 +1,201 @@
+import * as THREE from 'three/webgpu';
+import { stadiumGround } from './terrain.js';
+import { STADIUM, N, radiiAt, FIELD_Y, WALL_TOP, SEAT_TOP, RIM_Y, WALL_Y, AISLE_IN, CONCOURSE } from './stadium-shape.js';
+
+// Ann Arbor's landmarks are the city's own surveyed buildings (Burton Tower, Hill Auditorium, the Union...), drawn by
+// buildings.js. What the survey can't give is Michigan Stadium, "the Big House": a bowl dug into the ground, its stands
+// sloping from a low rim down to the field. It's modelled here on its real outline.
+
+let bryantParkLawn = null; // (New York's Bryant Park; Ann Arbor has none)
+
+// Michigan Stadium on its real outline (stadium-shape.js): the field 15 m below the street, a bowl of 70-odd rows of
+// aluminium benches on concrete with aisles, the blue halo with its maize stripe at the top, a brick outer wall only a
+// few metres high, the press box and suite towers along the west and east sides (2010), and the video boards at
+// each end. Everything stands on stadiumGround(), the ground around it, which terrain.js has dug out inside.
+function buildBigHouse(group, colliders) {
+  const { cx, cz } = STADIUM;
+  const G = stadiumGround();
+  const ROWS = 72, AISLE_EVERY = 6;
+  const pos = [], col = [];
+  const C = (hex) => new THREE.Color(hex).convertSRGBToLinear();
+  const bench = C(0xb9bdc2), riser = C(0x6d727a), aisle = C(0xd2cdc2), concrete = C(0xa6a39b), blue = C(0x00274c),
+    maize = C(0xffcb05), brick = C(0x8a4d37), stone = C(0xcfc6b4), turfDark = C(0x2f6b2c);
+  const quad = (a, b, c, d, color) => {
+    pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+    for (let i = 0; i < 6; i++) col.push(color.r, color.g, color.b);
+  };
+  // point on ray k (fractional) at distance r from the middle, height y above the ground around
+  const at = (k, r, y) => {
+    const a = (k / N) * Math.PI * 2;
+    return [cx + Math.cos(a) * r, G + y, cz + Math.sin(a) * r];
+  };
+  for (let k = 0; k < N; k++) {
+    const k1 = k + 1;
+    const [i0, o0] = radiiAt((k / N) * Math.PI * 2), [i1, o1] = radiiAt((k1 / N) * Math.PI * 2);
+    const isAisle = k % AISLE_EVERY === 0;
+    // the field wall: blue padding with a maize line along its top
+    quad(at(k, i0, FIELD_Y), at(k1, i1, FIELD_Y), at(k1, i1, WALL_TOP - 0.25), at(k, i0, WALL_TOP - 0.25), blue);
+    quad(at(k, i0, WALL_TOP - 0.25), at(k1, i1, WALL_TOP - 0.25), at(k1, i1, WALL_TOP), at(k, i0, WALL_TOP), maize);
+    // the walk around the field
+    quad(at(k, i0, WALL_TOP), at(k1, i1, WALL_TOP), at(k1, i1 + AISLE_IN, WALL_TOP), at(k, i0 + AISLE_IN, WALL_TOP), concrete);
+    // the rows: a riser and a tread each
+    const s0 = i0 + AISLE_IN, s1 = i1 + AISLE_IN, e0 = o0 - CONCOURSE, e1 = o1 - CONCOURSE;
+    for (let row = 0; row < ROWS; row++) {
+      const t0 = row / ROWS, t1 = (row + 1) / ROWS;
+      const ya = WALL_TOP + (SEAT_TOP - WALL_TOP) * t0, yb = WALL_TOP + (SEAT_TOP - WALL_TOP) * t1;
+      const ra0 = s0 + (e0 - s0) * t0, ra1 = s1 + (e1 - s1) * t0, rb0 = s0 + (e0 - s0) * t1, rb1 = s1 + (e1 - s1) * t1;
+      quad(at(k, ra0, ya), at(k1, ra1, ya), at(k1, ra1, yb), at(k, ra0, yb), isAisle ? aisle : riser);
+      quad(at(k, ra0, yb), at(k1, ra1, yb), at(k1, rb1, yb), at(k, rb0, yb), isAisle ? aisle : (row % 2 ? bench : C(0xaeb3b8)));
+    }
+    // the halo: blue fascia with a maize stripe over the top row, then the concourse to the outer wall
+    quad(at(k, e0, SEAT_TOP), at(k1, e1, SEAT_TOP), at(k1, e1, RIM_Y - 0.15), at(k, e0, RIM_Y - 0.15), blue);
+    quad(at(k, e0, RIM_Y - 0.15), at(k1, e1, RIM_Y - 0.15), at(k1, e1, RIM_Y), at(k, e0, RIM_Y), maize);
+    quad(at(k, e0, RIM_Y), at(k1, e1, RIM_Y), at(k1, o1 - 0.6, RIM_Y), at(k, o0 - 0.6, RIM_Y), concrete);
+    // the outer wall: a stone parapet over brick, down to the ground (and a little under it, on a slope)
+    quad(at(k, o0 - 0.6, RIM_Y), at(k1, o1 - 0.6, RIM_Y), at(k1, o1 - 0.6, WALL_Y), at(k, o0 - 0.6, WALL_Y), brick);
+    quad(at(k, o0 - 0.6, WALL_Y), at(k1, o1 - 0.6, WALL_Y), at(k1, o1, WALL_Y), at(k, o0, WALL_Y), stone);
+    quad(at(k, o0, WALL_Y), at(k1, o1, WALL_Y), at(k1, o1, WALL_Y - 0.7), at(k, o0, WALL_Y - 0.7), stone);
+    quad(at(k, o0, WALL_Y - 0.7), at(k1, o1, WALL_Y - 0.7), at(k1, o1, -3), at(k, o0, -3), brick);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  const stands = new THREE.Mesh(geo, new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.82, side: THREE.DoubleSide }));
+  stands.name = 'BigHouseStands';
+  stands.castShadow = stands.receiveShadow = true;
+  group.add(stands);
+
+  // The field: the floor inside the wall, then the turf with its maize-and-blue end zones, yard lines and the block M
+  const floorShape = new THREE.Shape();
+  for (let k = 0; k < N; k++) {
+    const a = (k / N) * Math.PI * 2, r = radiiAt(a)[0];
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    k ? floorShape.lineTo(x, -z) : floorShape.moveTo(x, -z);
+  }
+  const floor = new THREE.Mesh(new THREE.ShapeGeometry(floorShape).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardNodeMaterial({ color: turfDark, roughness: 0.92 }));
+  floor.position.set(cx, G + FIELD_Y, cz);
+  floor.receiveShadow = true;
+  group.add(floor);
+  const P = STADIUM.pitch;
+  const field = new THREE.Group();
+  field.position.set(P.cx, G + FIELD_Y + 0.03, P.cz);
+  field.rotation.y = Math.PI / 2 - P.angle; // the field's length (local z) along the pitch's long side
+  const flat = (w, d, color, y = 0, x = 0, z = 0) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), new THREE.MeshStandardNodeMaterial({ color, roughness: 0.9 }));
+    m.position.set(x, y, z);
+    m.receiveShadow = true;
+    field.add(m);
+    return m;
+  };
+  const W = 48.8, L = 91.4, EZ = 9.1; // 53⅓ yards wide, 100 yards and two end zones long
+  for (let i = 0; i < 20; i++) flat(W + 6, L / 20, i % 2 ? 0x3b8a35 : 0x347f30, 0.0, 0, -L / 2 + (i + 0.5) * (L / 20));
+  flat(W + 6, EZ + 3, 0x00274c, 0.01, 0, -(L / 2 + (EZ + 3) / 2));
+  flat(W + 6, EZ + 3, 0x00274c, 0.01, 0, L / 2 + (EZ + 3) / 2);
+  for (let yd = 0; yd <= 100; yd += 5) flat(W, yd % 10 ? 0.12 : 0.22, 0xf2f2ee, 0.03, 0, -L / 2 + (yd / 100) * L);
+  for (const sx of [-1, 1]) flat(0.2, L + EZ * 2, 0xf2f2ee, 0.03, sx * W / 2, 0);
+  for (const sz of [-1, 1]) flat(W, 0.2, 0xf2f2ee, 0.03, 0, sz * (L / 2 + EZ));
+  // hash marks
+  for (let yd = 1; yd < 100; yd++) for (const hx of [-3.08, 3.08]) flat(0.6, 0.1, 0xf2f2ee, 0.03, hx, -L / 2 + (yd / 100) * L);
+  const M = new THREE.Shape();
+  [[-5, -4], [-5, 4], [-3, 4], [0, 0.5], [3, 4], [5, 4], [5, -4], [3, -4], [3, 1], [0, -2.5], [-3, 1], [-3, -4]]
+    .forEach(([x, y], i) => i ? M.lineTo(x, y) : M.moveTo(x, y));
+  const mMesh = new THREE.Mesh(new THREE.ShapeGeometry(M).rotateX(-Math.PI / 2), new THREE.MeshStandardNodeMaterial({ color: 0xffcb05, roughness: 0.8 }));
+  mMesh.position.y = 0.05;
+  mMesh.scale.setScalar(1.4);
+  mMesh.rotation.y = -Math.PI / 2; // reads from the press box on the west side
+  field.add(mMesh);
+  // goalposts: maize uprights on a single post behind each end line
+  const postMat = new THREE.MeshStandardNodeMaterial({ color: 0xffcb05, roughness: 0.5 });
+  for (const s of [-1, 1]) {
+    const z = s * (L / 2 + EZ + 0.6);
+    const add = (geo, x, y, zz) => { const m = new THREE.Mesh(geo, postMat); m.position.set(x, y, zz); m.castShadow = true; field.add(m); };
+    add(new THREE.CylinderGeometry(0.12, 0.12, 3.05, 8), 0, 1.52, z + s * 1.5);
+    add(new THREE.BoxGeometry(0.15, 0.15, 1.6), 0, 3.05, z + s * 0.75);
+    add(new THREE.BoxGeometry(5.64, 0.12, 0.12), 0, 3.05, z);
+    for (const x of [-2.82, 2.82]) add(new THREE.CylinderGeometry(0.06, 0.06, 6.1, 6), x, 3.05 + 3.05, z);
+  }
+  group.add(field);
+
+  // The press box and suites along the west side, the suites along the east: brick boxes over the top rows, glass
+  // toward the field in three bands, a maize stripe along the top
+  const brickMat = new THREE.MeshStandardNodeMaterial({ color: 0x7e4733, roughness: 0.85 });
+  const glassMat = new THREE.MeshStandardNodeMaterial({ color: 0x1d2c3c, roughness: 0.12, metalness: 0.6 });
+  const bandMat = new THREE.MeshStandardNodeMaterial({ color: 0xd9d4c8, roughness: 0.7 });
+  const maizeMat = new THREE.MeshStandardNodeMaterial({ color: 0xffcb05, roughness: 0.6 });
+  const towers = [{ side: -1, top: 36, half: 66, depth: 22 }, { side: 1, top: 27, half: 60, depth: 18 }];
+  for (const t of towers) {
+    const rOut = radiiAt(t.side < 0 ? Math.PI : 0)[1];
+    const outerX = cx + t.side * rOut, innerX = outerX - t.side * t.depth, midX = (outerX + innerX) / 2;
+    const y0 = RIM_Y + 1.5, h = t.top - y0;
+    const box = new THREE.Mesh(new THREE.BoxGeometry(t.depth, h, t.half * 2), brickMat);
+    box.position.set(midX, G + y0 + h / 2, cz);
+    box.castShadow = box.receiveShadow = true;
+    group.add(box);
+    // the brick down to the ground on the outside
+    const base = new THREE.Mesh(new THREE.BoxGeometry(3, y0 + 3, t.half * 2), brickMat);
+    base.position.set(outerX - t.side * 1.5, G + (y0 - 3) / 2, cz);
+    group.add(base);
+    for (let b = 0; b < 3; b++) {
+      const gy = y0 + 3 + b * (h - 6) / 3, gh = (h - 6) / 3 - 1.4;
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(0.3, gh, t.half * 2 - 4), glassMat);
+      glass.position.set(innerX - t.side * 0.12, G + gy + gh / 2, cz);
+      group.add(glass);
+      const outerGlass = new THREE.Mesh(new THREE.BoxGeometry(0.3, gh * 0.6, t.half * 2 - 20), glassMat);
+      outerGlass.position.set(outerX + t.side * 0.12, G + gy + gh / 2, cz);
+      group.add(outerGlass);
+    }
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(t.depth + 0.4, 1.2, t.half * 2 + 0.4), maizeMat);
+    stripe.position.set(midX, G + t.top - 1.4, cz);
+    group.add(stripe);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(t.depth + 0.6, 0.5, t.half * 2 + 0.6), bandMat);
+    cap.position.set(midX, G + t.top + 0.25, cz);
+    group.add(cap);
+  }
+
+  // The video boards behind each end zone, on the outer wall
+  const boxMat = new THREE.MeshStandardNodeMaterial({ color: 0x3f474f, roughness: 0.5, metalness: 0.3 });
+  for (const s of [-1, 1]) {
+    const a = s < 0 ? -Math.PI / 2 : Math.PI / 2, rOut = radiiAt(a)[1];
+    const bz = cz + s * (rOut - 2);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(34, 14, 2), new THREE.MeshStandardNodeMaterial({ color: 0x00274c, roughness: 0.5 }));
+    board.position.set(cx, G + 23, bz);
+    board.castShadow = true;
+    group.add(board);
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(31, 10), new THREE.MeshBasicNodeMaterial({ color: 0x2b4a68 }));
+    screen.position.set(cx, G + 23.5, bz - s * 1.05);
+    if (s > 0) screen.rotation.y = Math.PI;
+    group.add(screen);
+    const band = new THREE.Mesh(new THREE.BoxGeometry(34.2, 1.2, 2.2), new THREE.MeshStandardNodeMaterial({ color: 0xffcb05, roughness: 0.6 }));
+    band.position.set(cx, G + 16.6, bz);
+    group.add(band);
+    for (const lx of [-12, 12]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(1.6, 16, 1.6), boxMat);
+      leg.position.set(cx + lx, G + 8, bz);
+      group.add(leg);
+    }
+  }
+
+  // Keep the survey's pieces of the stadium out, and the player and traffic outside its wall
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let k = 0; k < N; k++) {
+    const a = (k / N) * Math.PI * 2, r = radiiAt(a)[1];
+    minX = Math.min(minX, cx + Math.cos(a) * r); maxX = Math.max(maxX, cx + Math.cos(a) * r);
+    minZ = Math.min(minZ, cz + Math.sin(a) * r); maxZ = Math.max(maxZ, cz + Math.sin(a) * r);
+  }
+  colliders.push({ minX, maxX, minZ, maxZ, maxY: G + 45 });
+  // stood on the ground it was measured from: setOnTerrain leaves it be
+  group.userData.terrain = 'set';
+}
+
+function buildLandmarks(scene) {
+  const group = new THREE.Group();
+  group.name = 'AnnArborLandmarks';
+  const colliders = [];
+  buildBigHouse(group, colliders);
+  scene.add(group);
+  return { group, colliders };
+}
+
+export { buildLandmarks, bryantParkLawn };
