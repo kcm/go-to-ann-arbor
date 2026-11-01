@@ -26,10 +26,10 @@ import {
 } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  ISLAND_BOUNDS,
-  CENTRAL_PARK_BOUNDS,
-  getIslandBoundsAtZ,
-  MANHATTAN_COASTLINE,
+  TOWN_BOUNDS,
+  BIG_PARK_BOUNDS,
+  getTownBoundsAtZ,
+  TOWN_EDGE,
   WATERFRONT_PIERS,
   BLOCKS,
   streetZ,
@@ -37,7 +37,7 @@ import {
   ALL_AVENUES,
   ALL_STREETS,
   blockAt,
-  EAST_RIVER_BRIDGES,
+  SUSPENSION_BRIDGES,
   CUT_Z,
   WATER_POLYGONS,
   PARKING_LOTS
@@ -59,7 +59,7 @@ import {
   createTunnelShadeMaterial
 } from './tsl-materials.js';
 import { createRoadPaintChunkBuilder } from './road-paint.js';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 import { tagLot, createStripeMaterial } from './parking-stripes.js';
 import { buildPlaygrounds } from './playgrounds.js';
 import { buildGolf, buildTrails } from './golf.js';
@@ -67,7 +67,7 @@ import { buildRiver } from './river.js';
 import { riverDepth } from './terrain.js';
 
 // Live construction data consumed by the building and street-detail builders after buildCityGrid().
-let centralParkClearings;
+let bigParkClearings;
 let parkTreeSites;
 let parkLampSites;
 let pavedPlazaRects;
@@ -92,8 +92,8 @@ function getStreetGroundHeight(x, z) {
   return height;
 }
 
-// Manhattan's coastline, raised sidewalks, parks, waterfront piers and shore highways.
-// Boroughs, harbor islands and major river bridges are built in boroughs.js.
+// The town's ground inside its edge, raised sidewalks, parks and the freeways.
+// The countryside around the town is built in outskirts.js.
 
 /**
  * Builds a multi-part vaulted stone-arch park bridge (Gapstow Bridge & Bow Bridge)
@@ -155,7 +155,7 @@ function addStoneArchBridge(parent, cx, cz, rotY, span, width, archRise, wallMat
  * Builds a flat-faceted, glacially striated Manhattan Schist bedrock outcrop geometry
  * (non-indexed with crisp per-facet surface normals).
  */
-function buildManhattanSchistGeometry() {
+function buildBedrockGeometry() {
   const base = new THREE.DodecahedronGeometry(5.6, 1);
   const nonIndexed = base.index ? base.toNonIndexed() : base;
   const pos = nonIndexed.attributes.position;
@@ -301,7 +301,7 @@ function rectPolygon(minX, maxX, minZ, maxZ) {
 }
 
 /**
- * Clips polygon [{x, z}] (may be concave, e.g. MANHATTAN_COASTLINE) to the inside of a convex polygon (either winding).
+ * Clips polygon [{x, z}] (may be concave, e.g. TOWN_EDGE) to the inside of a convex polygon (either winding).
  * The part inside must be connected.
  */
 function clipPolygonToConvex(pts, convex) {
@@ -838,7 +838,7 @@ function buildWaterfrontPiers(group) {
   // Hudson piers run straight out along the cross streets; East River piers stand perpendicular to the bulkhead
   const pierFrame = (p) => {
     const west = p.side === 'west';
-    const shoreAt = (z) => { const b = getIslandBoundsAtZ(z); return west ? b.westX : b.eastX; };
+    const shoreAt = (z) => { const b = getTownBoundsAtZ(z); return west ? b.westX : b.eastX; };
     let theta = west ? Math.PI : Math.atan2(shoreAt(p.z + 14) - shoreAt(p.z - 14), 28);
     let x0 = shoreAt(p.z);
     let z0 = p.z;
@@ -1505,7 +1505,7 @@ function buildWaterfrontPiers(group) {
 function buildCityGrid(scene) {
   streetGroundSurfaces = [];
   const group = new THREE.Group();
-  group.name = 'ManhattanCityGrid';
+  group.name = 'CityGrid';
 
   const dummy = new THREE.Object3D();
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
@@ -1518,20 +1518,20 @@ function buildCityGrid(scene) {
   // 1-2. THE ROADWAY ASPHALT DECK over the whole detailed area (the blocks, lawns and the river are laid on it)
   // =========================================================================
   const waterMat = createWaterMaterial();
-  // Unified Manhattan Roadway Asphalt Deck (Y = 0.0) following true Manhattan coastline
+  // Unified Roadway Asphalt Deck (Y = 0.0) filling the town's edge
   const roadMat = createRoadSurfaceMaterial();
-  const roadMesh = createFlatPolygonMesh(MANHATTAN_COASTLINE, 0.0, roadMat, true);
+  const roadMesh = createFlatPolygonMesh(TOWN_EDGE, 0.0, roadMat, true);
   roadMesh.userData.terrainTolerance = 0.03; // Lamp: close enough to the ground that the road markings stay on it
   group.add(roadMesh);
 
   // =========================================================================
-  // 3. PARK LAWN MATERIALS (the harbor islands themselves are built in boroughs.js)
+  // 3. PARK LAWN MATERIALS
   // =========================================================================
   const cpLawnMat = createParkLawnMaterial(false);
   const cpMeadowMat = createParkLawnMaterial(true);
 
   // =========================================================================
-  // 4. RAISED SIDEWALKS & GRANITE CURBSTONES: every real curb island of Manhattan (city-config.js BLOCKS, from the
+  // 4. RAISED SIDEWALKS & GRANITE CURBSTONES: every real curb island in town (city-config.js BLOCKS, from the
   //    street centreline at its curb-to-curb widths). Rectangular islands are instanced slabs; the rest (Broadway's
   //    triangles & trapezoids, Lower Manhattan's irregular blocks, the malls down the middle of Park Ave & Broadway)
   //    are extruded from their outlines
@@ -1914,9 +1914,9 @@ function buildCityGrid(scene) {
   // cruise terminals, Chelsea Piers, Pier 57, Little Island, Pier 40, the Intrepid, the 79th St Boat Basin,
   // Pier 17, the Wavertree, Pier 15, Pier 11 and the Staten Island Ferry Whitehall Terminal (see buildWaterfrontPiers)
 
-  // 9 & 10. The East River bridges, harbor islands and the surrounding boroughs are built by boroughs.js
+  // 9 & 10. The countryside around the town is built by outskirts.js
 
-  // 11. Manhattan's waterfront edge: esplanades, shore highways & riverside park belts (see buildManhattanWaterfrontEdge)
+  // 11. Manhattan's waterfront edge: esplanades, shore highways & riverside park belts (see buildWaterfrontEdge)
   const highwayLanes = [];
 
   // Batch static sub-meshes by material to reduce per-frame WebGPU draw calls
@@ -1952,7 +1952,7 @@ function buildCityGrid(scene) {
  * South of the Williamsburg Bridge the FDR leaves the strip for the South Street Viaduct (buildSouthStreetViaduct).
  * Everything is merged into a handful of meshes and keeps clear of the bridge towers standing near the shore.
  */
-function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMat, curbMat, roadMat, roadPaint }) {
+function buildWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMat, curbMat, roadMat, roadPaint }) {
   const STEP = 3; // shore sampling (m of z)
   const HWY_W = 15.2; // 0.4 shoulder, 2 x 3.3 m lanes, 1.2 m median, 2 x 3.3 m lanes, 0.4 shoulder
   const COPING_Y = -0.04; // seawall coping top (section 2)
@@ -1960,13 +1960,13 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
   const UP = new THREE.Vector3(0, 1, 0);
   const hash = (a, b) => { const s = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return s - Math.floor(s); };
   const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
-  const shoreX = (z, west) => { const b = getIslandBoundsAtZ(z); return west ? b.westX : b.eastX; };
+  const shoreX = (z, west) => { const b = getTownBoundsAtZ(z); return west ? b.westX : b.eastX; };
 
   // Keep clear: footprints (+1.5 m) of the bridge piers / caissons and Manhattan anchorages near the shore (any d), the
   // pier decks reaching up to ~4 m inland, the 79th St Boat Basin gangways and Basketball City's shed on Pier 36 (gaps
   // block elements closer to the water than dMax)
   const towers = []; // oriented boxes { cx, cz, ux, uz, hl, hw } (u = along the bridge)
-  for (const br of EAST_RIVER_BRIDGES) {
+  for (const br of SUSPENSION_BRIDGES) {
     const dx = br.b.x - br.a.x;
     const dz = br.b.z - br.a.z;
     const L = Math.hypot(dx, dz);
@@ -1974,7 +1974,7 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
     const keep = (t, len, wid) => {
       const cx = br.a.x + dx * t;
       const cz = br.a.z + dz * t;
-      if (Math.abs(cx - getIslandBoundsAtZ(cz).eastX) < 70) towers.push({ cx, cz, ux: dx / L, uz: dz / L, hl: len / 2 + 1.5, hw: wid / 2 + 1.5 });
+      if (Math.abs(cx - getTownBoundsAtZ(cz).eastX) < 70) towers.push({ cx, cz, ux: dx / L, uz: dz / L, hl: len / 2 + 1.5, hw: wid / 2 + 1.5 });
     };
     for (const t of br.towers) keep(t, foot[0], foot[1]);
     if (br.anchorage) keep(br.towers[0] - br.sideSpan / L, br.anchorage[0], br.width + br.anchorage[1]);
@@ -2458,11 +2458,11 @@ function buildManhattanWaterfrontEdge(group, { blockSidewalks, treeSites, lawnMa
  * two-column bents a few metres inland of the esplanade, passes the Manhattan and Brooklyn Bridge towers and the
  * Seaport piers, comes back down to grade (~7 %) at Whitehall and dives into the Battery Park Underpass: a covered,
  * lawn-topped portal (buildUnderpassPortal) whose dark mouth swallows the cars; their lanes carry on underground to
- * West St's portal on the other side of the Battery (joined by buildManhattanWaterfrontEdge).
+ * West St's portal on the other side of the Battery (joined by buildWaterfrontEdge).
  * The centre line runs D0 m inland of the smoothed shore and swerves smoothly around the bridge piers, anchorages and
  * pier buildings in the way; it starts on the at-grade highway's centre line (`start`).
  * opts: { start {x, z}, shoreX(z), obstacles [oriented boxes {cx, cz, ux, uz, hl, hw}], zEnd, quad & makeAcc (from
- *   buildManhattanWaterfrontEdge), roadMat, lawnMat, paint (road paint accumulator), WHITE, YELLOW, lightSpots (median
+ *   buildWaterfrontEdge), roadMat, lawnMat, paint (road paint accumulator), WHITE, YELLOW, lightSpots (median
  *   highway lights [x, y, z, yaw]), underSpots (lamps under the deck, same format; the tunnel's ceiling lights get a
  *   fifth element 'tunnel'), groundOK(x, z) (whether a column may stand there: not in a street) }
  * Returns { lane(o): centre line (Vector3s, southbound order, without the start point, 4.7 m down at the far end of
@@ -2813,7 +2813,7 @@ function buildSouthStreetViaduct(group, opts) {
  * fraction of the way to the screen) under two rows of ceiling lights; the traffic lanes dip underground behind it.
  * frames: cross-sections [{ x, z, nx, nz, y, half }] from the mouth to the far end: (nx, nz) the unit vector across the
  *   road, y the road level, half the half-width between the inner wall faces
- * acc: { deck (optional), conc, roof, dark, shade } accumulators for quad() (from buildManhattanWaterfrontEdge)
+ * acc: { deck (optional), conc, roof, dark, shade } accumulators for quad() (from buildWaterfrontEdge)
  * lights: the ceiling lights are pushed as [x, y, z, yaw, 'tunnel']; colliders: player AABBs (four across each segment)
  */
 function buildUnderpassPortal(frames, acc, quad, lights, colliders) {
@@ -2913,7 +2913,7 @@ export {
   buildCityGrid,
   getStreetGroundHeight,
   batchStaticGroupMeshes,
-  centralParkClearings,
+  bigParkClearings,
   parkTreeSites,
   parkLampSites,
   pavedPlazaRects,

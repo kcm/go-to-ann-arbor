@@ -668,7 +668,7 @@ body.hud-minimized .icon-show {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
 }
 
-/* Green blade, white inset border, Highway Gothic lettering: the sign on every Manhattan corner */
+/* Green blade, white inset border, Highway Gothic lettering: the sign on every corner in town */
 .street-sign {
   max-width: 210px;
   overflow: hidden;

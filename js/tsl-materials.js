@@ -59,11 +59,9 @@ import {
   specularF90
 } from 'three/tsl';
 import {
-  CENTRAL_PARK_BOUNDS,
-  ISLAND_BOUNDS,
-  getIslandBoundsAtZ,
-  NJ_SHORELINE_POLYGON,
-  LONG_ISLAND_POLYGONS,
+  BIG_PARK_BOUNDS,
+  TOWN_BOUNDS,
+  getTownBoundsAtZ,
   streetZ
 } from './city-config.js';
 import { groundHeightNode } from './terrain.js';
@@ -192,8 +190,8 @@ const distantWindowLight = Fn(([grid, fw, probability, seed, lod]) => {
  */
 const canyonSkyAONode = Fn(() => {
   const wp = positionWorld;
-  // Open sky inside Central Park (city-config.js CENTRAL_PARK_BOUNDS, 5th Ave to Central Park West, 59th to 110th St)
-  const cp = CENTRAL_PARK_BOUNDS;
+  // Open sky inside Central Park (city-config.js BIG_PARK_BOUNDS, 5th Ave to Central Park West, 59th to 110th St)
+  const cp = BIG_PARK_BOUNDS;
   const inParkX = smoothstep(cp.minX - 10.0, cp.minX + 20.0, wp.x).mul(float(1.0).sub(smoothstep(cp.maxX - 20.0, cp.maxX + 10.0, wp.x)));
   const inParkZ = smoothstep(cp.minZ - 10.0, cp.minZ + 30.0, wp.z).mul(float(1.0).sub(smoothstep(cp.maxZ - 30.0, cp.maxZ + 10.0, wp.z)));
   const inPark = inParkX.mul(inParkZ);
@@ -2833,7 +2831,7 @@ function createWaterMaterial() {
   });
 
   const waveTex = getWaterWaveTexture();
-  const harbourY = ISLAND_BOUNDS ? ISLAND_BOUNDS.waterLevel : -2.2;
+  const harbourY = TOWN_BOUNDS ? TOWN_BOUNDS.waterLevel : -2.2;
   const pond = smoothstep(harbourY + 1.0, harbourY + 2.0, positionWorld.y);
 
   // [tile size (m), rotation (rad), RMS slope]: incommensurate scales & angles so no pattern repeats
@@ -2897,42 +2895,30 @@ function createWaterMaterial() {
     return mix(body, lake, pond).mul(crestTint);
   })();
 
-  // Night: the lit city seen along the reflected ray. Manhattan is a stack of boxes roughly inscribed in its shoreline;
-  // across the rivers stand the NJ & Queens / Brooklyn waterfronts, and around the park lakes Central Park's rim.
+  // Night: the lit city seen along the reflected ray. The town is a stack of boxes inscribed in its edge, with a row of
+  // lit lots standing back from the water on either side, and around a big park's lakes its rim (none in Ann Arbor).
   // Each is a row of lots with varied heights, lit windows, storefronts & riverside lamps, box-filtered by the unresolved
   // wave slopes (vertically) & the foreshortened lateral slopes (horizontally), so distant lights smear into streaks.
   // The boxes & shorelines come from the real geography (city-config.js): [minX, minZ, maxX, maxZ] slabs inscribed in
-  // the island ~1.1 km apart, the NJ shore west of it & the Brooklyn / Queens shore east of it every 900 m of z
+  // the town ~1.1 km apart, and the far rows west and east of it every 900 m of z
 
-  const IB = ISLAND_BOUNDS;
-  const MANHATTAN_BOXES = [];
+  const IB = TOWN_BOUNDS;
+  const TOWN_BOXES = [];
   for (let z0 = IB.minZ; z0 < IB.maxZ - 1; z0 += 1140) {
     const z1 = Math.min(IB.maxZ, z0 + 1140);
     let x0 = -Infinity, x1 = Infinity;
     for (let z = z0; z <= z1 + 0.1; z += (z1 - z0) / 8) {
-      const s = getIslandBoundsAtZ(z);
+      const s = getTownBoundsAtZ(z);
       x0 = Math.max(x0, s.westX + 40);
       x1 = Math.min(x1, s.eastX - 40);
     }
-    if (x1 - x0 > 100) MANHATTAN_BOXES.push([Math.round(x0), Math.round(z0), Math.round(x1), Math.round(z1)]);
+    if (x1 - x0 > 100) TOWN_BOXES.push([Math.round(x0), Math.round(z0), Math.round(x1), Math.round(z1)]);
   }
-  const crossings = (polys, z) => {
-    const xs = [];
-    for (const poly of polys) {
-      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-        const a = poly[i], b = poly[j];
-        if ((a.z > z) !== (b.z > z)) xs.push(a.x + ((z - a.z) * (b.x - a.x)) / (b.z - a.z));
-      }
-    }
-    return xs;
-  };
   const westShore = [], eastShore = [];
   for (let z = IB.minZ - 900; z <= IB.maxZ + 900; z += 900) {
-    const s = getIslandBoundsAtZ(Math.max(IB.minZ, Math.min(IB.maxZ, z)));
-    const w = crossings([NJ_SHORELINE_POLYGON], z).filter((x) => x < s.westX - 150);
-    const e = crossings(LONG_ISLAND_POLYGONS || [], z).filter((x) => x > s.eastX + 100);
-    westShore.push([z, w.length ? Math.max(...w) : s.westX - 1300]);
-    eastShore.push([z, e.length ? Math.min(...e) : s.eastX + 900]);
+    const s = getTownBoundsAtZ(Math.max(IB.minZ, Math.min(IB.maxZ, z)));
+    westShore.push([z, s.westX - 1300]);
+    eastShore.push([z, s.eastX + 900]);
   }
   // A shoreline x(z) through its control points, linear from one to the next. Built as a balanced sum of independent
   // per-segment terms: a 17-deep chain of nested mix() nodes takes TSL's node build exponentially long (getNodeType
@@ -2954,7 +2940,7 @@ function createWaterMaterial() {
     }
     return terms[0];
   };
-  const CPB = CENTRAL_PARK_BOUNDS;
+  const CPB = BIG_PARK_BOUNDS;
   const zSt = (n) => streetZ(n);
   mat.emissiveNode = Fn(() => {
     const emit = vec3(0.0).toVar();
@@ -2983,7 +2969,7 @@ function createWaterMaterial() {
 
         // Nearest Manhattan face entered from outside
         const tIsland = float(1e5).toVar();
-        for (const [x0, z0, x1, z1] of MANHATTAN_BOXES) {
+        for (const [x0, z0, x1, z1] of TOWN_BOXES) {
           const ta = vec2(x0, z0).sub(P).mul(inv);
           const tb = vec2(x1, z1).sub(P).mul(inv);
           const tn = max(min(ta.x, tb.x), min(ta.y, tb.y));
@@ -3009,11 +2995,11 @@ function createWaterMaterial() {
 
         // Skyline heights: Midtown (60th to 28th St) & the Financial District (south of Chambers St) stand tallest
         const midtown = smoothstep(zSt(80), zSt(60), hit.y).mul(float(1.0).sub(smoothstep(zSt(28), zSt(14), hit.y)));
-        const manhattanS = mix(float(70.0), float(215.0), max(midtown, smoothstep(4400.0, 4950.0, hit.y)));
+        const townS = mix(float(70.0), float(215.0), max(midtown, smoothstep(4400.0, 4950.0, hit.y)));
         // Across the rivers: the Jersey City towers (Newport to Exchange Place) & Long Island City (opposite 60th-26th St)
         const jerseyCity = smoothstep(3300.0, 3900.0, hit.y).mul(float(1.0).sub(smoothstep(6100.0, 6500.0, hit.y))).mul(step(hit.x, 0.0));
         const lic = smoothstep(zSt(62), zSt(57), hit.y).mul(float(1.0).sub(smoothstep(zSt(30), zSt(25), hit.y))).mul(step(0.0, hit.x));
-        const S = mix(mix(mix(float(30.0), float(120.0), max(jerseyCity, lic)), manhattanS, onIsland), float(120.0), lake);
+        const S = mix(mix(mix(float(30.0), float(120.0), max(jerseyCity, lic)), townS, onIsland), float(120.0), lake);
         const brightness = mix(mix(float(0.6), float(1.0), onIsland), float(0.8), lake);
 
         // Footprint on the facades (m): unresolved slopes tilt the reflection ±2σ, laterally foreshortened at grazing views

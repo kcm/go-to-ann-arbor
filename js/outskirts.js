@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { positionWorld, vec2, vec3, float, floor, fract, sin, dot, mix, smoothstep, abs, fwidth, min } from 'three/tsl';
-import { ISLAND_BOUNDS } from './city-config.js';
+import { TOWN_BOUNDS } from './city-config.js';
 import { groundHeight } from './terrain.js';
 
 // Washtenaw County around the detailed city: the real hills and the Huron valley (terrain.js) as farm fields, woodlots
@@ -31,9 +31,9 @@ function createCountryMaterial() {
   c = c.mul(float(0.97).add(rows));
   c = mix(c, wood.mul(1.1), hedge.mul(0.85));
   // the suburbs near the city: more tree cover the closer it is
-  const cx = (ISLAND_BOUNDS.minX + ISLAND_BOUNDS.maxX) / 2, cz = (ISLAND_BOUNDS.minZ + ISLAND_BOUNDS.maxZ) / 2;
-  const dx = abs(wp.x.sub(cx)).sub((ISLAND_BOUNDS.maxX - ISLAND_BOUNDS.minX) / 2).max(0);
-  const dz = abs(wp.z.sub(cz)).sub((ISLAND_BOUNDS.maxZ - ISLAND_BOUNDS.minZ) / 2).max(0);
+  const cx = (TOWN_BOUNDS.minX + TOWN_BOUNDS.maxX) / 2, cz = (TOWN_BOUNDS.minZ + TOWN_BOUNDS.maxZ) / 2;
+  const dx = abs(wp.x.sub(cx)).sub((TOWN_BOUNDS.maxX - TOWN_BOUNDS.minX) / 2).max(0);
+  const dz = abs(wp.z.sub(cz)).sub((TOWN_BOUNDS.maxZ - TOWN_BOUNDS.minZ) / 2).max(0);
   const near = float(1).sub(smoothstep(300, 1800, dx.add(dz)));
   const canopy = hash(floor(wp.xz.div(14))).mul(0.5).add(0.5);
   c = mix(c, mix(vec3(0.14, 0.24, 0.1), vec3(0.42, 0.42, 0.4), smoothstep(0.85, 0.9, canopy)), near.mul(0.75));
@@ -44,7 +44,7 @@ function createCountryMaterial() {
 function buildOutskirts(scene) {
   const group = new THREE.Group();
   group.name = 'Outskirts';
-  const B = ISLAND_BOUNDS;
+  const B = TOWN_BOUNDS;
   // a 50 m grid of the real heights out to 6 km beyond the city, with a hole where the city is
   const STEP = 50, MARGIN = 6000;
   const x0 = Math.floor((B.minX - MARGIN) / STEP) * STEP, x1 = Math.ceil((B.maxX + MARGIN) / STEP) * STEP;

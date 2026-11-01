@@ -7,7 +7,7 @@
       "url" : "https://github.com/lampdotdev/newyork"
     },
     {
-      "commit" : "2ef39aef4a2feb95f99e785b3c0e55bdc22bbba9",
+      "commit" : "ecf8a58b175e39f1cb8c3593dd14a4013b700878",
       "name" : "Go To Ann Arbor",
       "url" : "https://github.com/mrubens/go-to-ann-arbor",
       "wish" : "3DF4E397-D414-4837-8390-3F7946A6D12D"
@@ -48,21 +48,25 @@
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "AAGIS Building Footprints",
       "url" : "https://ckan.a2gov.org/dataset/building-footprints"
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "Street Trees",
       "url" : "https://a2gov.org/services/data-catalog"
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "2023 Impervious Surfaces",
       "url" : "https://a2maps.a2gov.org/a2arcgis/rest/services/ImperviousSurfaces/MapServer/7"
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "Urban Tree Canopy",
       "url" : "https://a2maps.a2gov.org/a2arcgis/rest/services/NaturalFeatures/MapServer/10"
     },
@@ -74,38 +78,57 @@
     },
     {
       "author" : "Ann Arbor Area Transportation Authority (TheRide)",
+      "license" : "None",
       "name" : "TheRide GTFS timetable",
       "url" : "https://www.theride.org/business/software-developers"
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "Road Centerlines (speed limits)",
       "url" : "https://a2maps.a2gov.org/a2arcgis/rest/services/RoadsSpeedlimitCrash/MapServer/1"
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "Fire Hydrants",
       "url" : "https://ckan.a2gov.org/dataset/fire-hydrants"
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "Park Amenities",
       "url" : "https://ckan.a2gov.org/dataset/park-amenities"
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "Address Points",
       "url" : "https://ckan.a2gov.org/dataset/address-points"
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "Land Use",
       "url" : "https://ckan.a2gov.org/dataset/land-use"
     },
     {
       "author" : "City of Ann Arbor",
+      "license" : "None",
       "name" : "Historic Districts",
       "url" : "https://ckan.a2gov.org/dataset/historic-districts"
+    },
+    {
+      "author" : "U.S. Geological Survey",
+      "license" : "LicenseRef-US-Government-Public-Domain",
+      "name" : "Huron River at Ann Arbor gauge (04174500), live flow",
+      "url" : "https://waterdata.usgs.gov/monitoring-location/04174500/"
+    },
+    {
+      "author" : "Amtrak (National Railroad Passenger Corporation)",
+      "license" : "None",
+      "name" : "Amtrak GTFS timetable (Wolverine stops at Ann Arbor)",
+      "url" : "https://content.amtrak.com/content/gtfs/GTFS.zip"
     }
   ]
 }

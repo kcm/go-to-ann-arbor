@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 import { PARKING_LOTS } from './city-config.js';
 import { BODY_SPECS, buildCarGeometry, buildCarProxyGeometry, buildSteerableWheelGeo, createLoftedCarMaterial, annArborCar } from './cars.js';
 import { groundHeight, groundTilt } from './terrain.js';

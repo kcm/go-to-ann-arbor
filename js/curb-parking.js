@@ -1,4 +1,4 @@
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 
 // Lamp: the parking lanes along a street's curbs, as the map has them (OpenStreetMap's parking:both / :left / :right;
 // untagged, only the metered streets downtown: tools' park_spec), each 2.4 m wide inside the curb. One answer for the

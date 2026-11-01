@@ -1,6 +1,6 @@
 // js/terrain.js
-// The height of the ground over Manhattan, in metres above the street level the rest of the city was drawn at (y = 0),
-// from data/elevation.bin.gz (made by Assets/Tools/build-elevation.mjs). Heights are 0 in the water and ease to 0
+// The height of the ground over Ann Arbor, in metres above the street level the rest of the city was drawn at (y = 0),
+// from data/elevation.bin.gz (made by Assets/Tools/build-annarbor.py from the open Terrain Tiles). Heights are 0 in the water and ease to 0
 // near the shore, so whatever sits at the waterline (seawalls, waterfront highways, piers, bridge landings) stays
 // where it was drawn.
 //
@@ -12,7 +12,7 @@ import * as THREE from 'three/webgpu';
 import { float, texture, uniform, vec2 } from 'three/tsl';
 import { hot, asset } from '../lamp-game.js';
 import { STADIUM, radiiAt, bowlSurface } from './stadium-shape.js';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 
 let grid = null; // { x0, z0, step, cols, rows, heights: Float32Array }
 

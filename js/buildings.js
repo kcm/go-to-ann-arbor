@@ -20,8 +20,8 @@ import {
 } from 'three/tsl';
 import {
   ALL_AVENUES,
-  CENTRAL_PARK_BOUNDS,
-  ISLAND_BOUNDS,
+  BIG_PARK_BOUNDS,
+  TOWN_BOUNDS,
   LANDMARK_SITES,
   streetZ,
   avenueX
@@ -32,7 +32,7 @@ import {
   createBillboardMaterial,
   filteredPulse
 } from './tsl-materials.js';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 import { REAL_BUILDINGS } from './building-geodata.js';
 import { createBuildingFootprints } from './building-footprints.js';
 import { buildHouses } from './houses.js';
@@ -219,15 +219,15 @@ function createHouseRoofs(items) {
 
 function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasStations = null) {
   const group = new THREE.Group();
-  group.name = 'ManhattanCityBlocks';
+  group.name = 'CityBlocks';
   const colliders = [];
 
   // Stream nearby architectural details.
   const quadtree = new Quadtree({
-    minX: ISLAND_BOUNDS.minX - 50,
-    maxX: ISLAND_BOUNDS.maxX + 50,
-    minZ: ISLAND_BOUNDS.minZ - 50,
-    maxZ: ISLAND_BOUNDS.maxZ + 50
+    minX: TOWN_BOUNDS.minX - 50,
+    maxX: TOWN_BOUNDS.maxX + 50,
+    minZ: TOWN_BOUNDS.minZ - 50,
+    maxZ: TOWN_BOUNDS.maxZ + 50
   }, 6, 9);
   const allBlocks = [];
 
@@ -391,7 +391,7 @@ function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasSta
     return Array.from(found, (index) => buildingReserves[index]);
   }
   function overlapsParkOrLandmark(minX, maxX, minZ, maxZ) {
-    const cp = CENTRAL_PARK_BOUNDS;
+    const cp = BIG_PARK_BOUNDS;
     if (maxX > cp.minX && minX < cp.maxX && maxZ > cp.minZ && minZ < cp.maxZ) return true;
     return LANDMARK_RESERVE.some((h) => hitR(h, minX, maxX, minZ, maxZ));
   }
@@ -807,11 +807,11 @@ function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasSta
   group.add(awningInst);
 
   const signThemes = [
-    { bg: '#161210', border: '#c89d54', text: 'FIFTH AVE BISTRO · EST. 1928', color: '#ffe4a8' },
-    { bg: '#0c2244', border: '#38b6ff', text: 'DUANE READE · PHARMACY', color: '#ffffff' },
-    { bg: '#142b20', border: '#d4af37', text: 'MANHATTAN BOOKS & ESPRESSO', color: '#fff2cc' },
-    { bg: '#280a10', border: '#ff5252', text: 'BROADWAY DELI & GRILL · 24HR', color: '#ffd180' },
-    { bg: '#101318', border: '#e0e6ed', text: 'EMPIRE WATCHES · NEW YORK', color: '#f5f9ff' }
+    { bg: '#161210', border: '#c89d54', text: 'MAIN STREET BISTRO · EST. 1928', color: '#ffe4a8' },
+    { bg: '#0c2244', border: '#38b6ff', text: 'CORNER PHARMACY', color: '#ffffff' },
+    { bg: '#142b20', border: '#d4af37', text: 'KERRYTOWN BOOKS & ESPRESSO', color: '#fff2cc' },
+    { bg: '#280a10', border: '#ff5252', text: 'LIBERTY DELI & GRILL', color: '#ffd180' },
+    { bg: '#101318', border: '#e0e6ed', text: 'STATE STREET WATCHES', color: '#f5f9ff' }
   ];
   const MAX_SIGNS_PER_THEME = Math.ceil(MAX_AWNINGS / signThemes.length) + 32;
   const signInsts = signThemes.map((st) => {

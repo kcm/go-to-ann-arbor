@@ -1,11 +1,11 @@
 import {
   ALL_AVENUES,
   ALL_STREETS,
-  ISLAND_BOUNDS,
-  getIslandBoundsAtZ,
+  TOWN_BOUNDS,
+  getTownBoundsAtZ,
   BLOCKS
 } from './city-config.js';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 import { polygonBoxOverlaps } from './building-collision.js';
 import { curbParking } from './curb-parking.js';
 
@@ -18,8 +18,8 @@ import { curbParking } from './curb-parking.js';
 // (rx, rz) = (-dz, dx). Lanes are lateral offsets to the right of the centreline, sorted left to right.
 
 const CELL = 32;
-const Z_MIN = Math.floor(ISLAND_BOUNDS.minZ) - 20; // the detailed island, ~129th St to the Battery
-const Z_MAX = Math.ceil(ISLAND_BOUNDS.maxZ) + 20;
+const Z_MIN = Math.floor(TOWN_BOUNDS.minZ) - 20; // the detailed island, ~129th St to the Battery
+const Z_MAX = Math.ceil(TOWN_BOUNDS.maxZ) + 20;
 const LANE_CLEAR = 1.2; // half width each lane keeps free of obstacles
 const CROSSWALK = 2.5; // depth between an intersection box and its stop lines
 const SHORE_MARGIN = 6;
@@ -58,7 +58,7 @@ function buildRoadNetwork(sidewalks, obstacles, signalIntersections = []) {
 
   function onLand(minX, maxX, minZ, maxZ) {
     for (const z of [minZ, maxZ]) {
-      const shore = getIslandBoundsAtZ(z);
+      const shore = getTownBoundsAtZ(z);
       if (minX < shore.westX + SHORE_MARGIN || maxX > shore.eastX - SHORE_MARGIN) return false;
     }
     return true;

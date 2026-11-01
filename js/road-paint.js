@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { CROSSWALK } from './road-network.js';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 import { createRoadPaintMaterial } from './tsl-materials.js';
 import { curbStalls } from './curb-parking.js';
 
@@ -19,7 +19,7 @@ const PAINT_CELL_SIZE = 1200;
 const PAINT_CULL_DISTANCE = 1650;
 const WIDEN_SPHERE_PAD = 16; // createRoadPaintMaterial widens thin distant strips up to 16x in screen space
 
-// Spatial chunk builder shared by Manhattan street markings and perimeter highway markings (js/city-grid.js), so
+// Spatial chunk builder shared by the town's street markings and perimeter highway markings (js/city-grid.js), so
 // off-screen and distant (> 1.65 km) road paint is culled instead of transforming all 12.5 km of vertices every frame.
 function createRoadPaintChunkBuilder(name, { cellSize = PAINT_CELL_SIZE, cullDistance = PAINT_CULL_DISTANCE } = {}) {
   const cells = new Map();

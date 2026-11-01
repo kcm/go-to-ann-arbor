@@ -4,7 +4,7 @@ import { cityUniforms } from './tsl-materials.js';
 import { nearestRoads } from './city-config.js';
 import { historicDistrictAt } from './districts.js';
 import { groundHeight } from './terrain.js';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 
 // Ann Arbor's houses, from the city's surveyed footprints and heights. Each footprint is split into its main block and
 // up to three wings (the largest rectangles inside it), so L-shapes, side wings and back additions keep their shape.

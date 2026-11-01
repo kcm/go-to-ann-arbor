@@ -5,7 +5,7 @@ import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
 import { createPostProcessing } from './post-processing.js';
 import { ClusteredLighting } from 'three/addons/lighting/ClusteredLighting.js';
-import { getLocationLabel, isTypingInField, ROADS, NYC_LANDMARKS, TELEPORT_LOCATIONS } from './city-config.js';
+import { getLocationLabel, isTypingInField, ROADS, LANDMARKS, TELEPORT_LOCATIONS } from './city-config.js';
 import { buildCityGrid } from './city-grid.js';
 import { buildOutskirts } from './outskirts.js';
 import { buildLandmarks } from './landmarks.js';
@@ -24,7 +24,7 @@ import { TouchControls } from './touch-controls.js';
 import { GamepadControls } from './gamepad-controls.js';
 import { CameraSystem, CAMERA_PRESETS } from './cameras.js';
 import { LightingSystem, sunTimes } from './lighting.js';
-import { NYCMapSystem } from './nyc-map.js';
+import { CityMapSystem } from './city-map.js';
 import { setupSceneCulling, updateSceneCulling, cullAlso, showShadowStandIns } from './scene-culling.js';
 import { loadTerrain, setOnTerrain, groundHeight } from './terrain.js';
 import { CityAudioSystem } from './audio-system.js';
@@ -85,7 +85,7 @@ async function initApp() {
     streetLights: false,
     reflections: false,
     bloom: true,
-    boroughs: true
+    outskirts: true
   };
   // Kept through a change: a new one would compile every shader again.
   const renderer = await live.keep('renderer', async () => {
@@ -138,7 +138,7 @@ async function initApp() {
   await showLoadingStage('Reading the ground\'s heights...');
   const heights = await loadTerrain();
   markInit('terrain');
-  // 3. Build Manhattan Geography, Iconic Landmarks, Blocks, Street Details & Traffic
+  // 3. Build Ann Arbor's Geography, Landmarks, Blocks, Street Details & Traffic
   // Lamp: each part of the city is built into a group of its own, set on the ground and cut for culling there
   // (cityPart), and kept through a change that isn't its own (see the top of this file): `inputs` are what it's built
   // from, so a part built again builds again the parts made from it. Each part's time is in the "[init]" line.
@@ -161,16 +161,16 @@ async function initApp() {
   const grid = live.keep('grid', () => cityPart((g) => {
     const made = buildCityGrid(g);
     // Lamp: the street level built flat at y = 0, set on the ground
-    setOnTerrain(g.getObjectByName('ManhattanCityGrid'));
+    setOnTerrain(g.getObjectByName('CityGrid'));
     return made;
   }, { cull: setupSceneCulling }), { inputs: [heights] });
   const cityGrid = grid.made;
   markInit('cityGrid');
   await showLoadingStage('Laying out the hills of Washtenaw County...');
-  const boroughPart = live.keep('boroughs', () => cityPart((g) => buildOutskirts(g), { cull: setupSceneCulling }),
+  const outskirtsPart = live.keep('outskirts', () => cityPart((g) => buildOutskirts(g), { cull: setupSceneCulling }),
     { inputs: [heights, grid] });
-  const boroughs = boroughPart.made;
-  markInit('boroughs');
+  const outskirts = outskirtsPart.made;
+  markInit('outskirts');
   await showLoadingStage('Building the Big House...');
   const landmarks = live.keep('landmarks', () => cityPart((g) => buildLandmarks(g), { cull: setupSceneCulling }), { inputs: [heights] });
   const landmarkColliders = landmarks.made.colliders;
@@ -191,7 +191,7 @@ async function initApp() {
     { inputs: [heights, landmarks], from: ['data/addresses.json', 'data/districts.json', 'data/gas-stations.json', 'data/roof-shapes.json'] });
   const cityBlocks = blocks.made;
   markInit('blocks');
-  const allColliders = [...landmarkColliders, ...cityBlocks.colliders, ...boroughs.colliders, ...(cityGrid.colliders || [])];
+  const allColliders = [...landmarkColliders, ...cityBlocks.colliders, ...outskirts.colliders, ...(cityGrid.colliders || [])];
 
   await showLoadingStage('Placing trees, streetlights and street furniture...');
   // Lamp: trees, lamps and street furniture were placed on the ground as they were built; the street level under them
@@ -201,9 +201,9 @@ async function initApp() {
   const streetFurniture = furnitureBytes ? JSON.parse(new TextDecoder().decode(furnitureBytes)) : null;
   const details = live.keep('streetDetails', () => cityPart((g) => {
     const made = buildStreetDetails(g, allColliders, streetFurniture);
-    setOnTerrain(g.getObjectByName('ManhattanStreetDetails'));
+    setOnTerrain(g.getObjectByName('StreetDetails'));
     return made;
-  }, { cull: setupSceneCulling }), { inputs: [heights, grid, boroughPart, landmarks, blocks], from: ['data/street-furniture.json'] });
+  }, { cull: setupSceneCulling }), { inputs: [heights, grid, outskirtsPart, landmarks, blocks], from: ['data/street-furniture.json'] });
   const streetDetails = details.made;
   markInit('streetDetails');
   await showLoadingStage('Creating traffic and pedestrian routes...');
@@ -216,7 +216,7 @@ async function initApp() {
     ...details.made.footprints,
     ...allColliders.filter((c) => !c.obb
       && (c.minY ?? 0) - groundHeight((c.minX + c.maxX) * 0.5, (c.minZ + c.maxZ) * 0.5) < 3.5)
-  ], details.made.signalIntersections)), { inputs: [heights, grid, boroughPart, landmarks, blocks, details] });
+  ], details.made.signalIntersections)), { inputs: [heights, grid, outskirtsPart, landmarks, blocks, details] });
   const trafficSystem = traffic.made;
   markInit('traffic');
   const highway = live.keep('highwayTraffic', () => cityPart((g) => createHighwayTraffic(g, grid.made.highwayLanes)), { inputs: [grid] });
@@ -243,7 +243,10 @@ async function initApp() {
   // where streets cross the tracks at grade, with gates (build-rail-crossings.py, OpenStreetMap)
   const crossingBytes = await asset('data/rail-crossings.json');
   const railCrossings = crossingBytes ? JSON.parse(new TextDecoder().decode(crossingBytes)) : [];
-  const railPart = live.keep('railways', () => cityPart((g) => buildRailways(g, railCrossings)), { inputs: [heights], from: ['data/rail-crossings.json'] });
+  // Amtrak's Wolverine stops at Ann Arbor on its timetable (build-wolverine.py, from Amtrak's GTFS feed)
+  const wolverineBytes = await asset('data/wolverine.json');
+  const wolverine = wolverineBytes ? JSON.parse(new TextDecoder().decode(wolverineBytes)) : null;
+  const railPart = live.keep('railways', () => cityPart((g) => buildRailways(g, railCrossings, wolverine)), { inputs: [heights], from: ['data/rail-crossings.json', 'data/wolverine.json'] });
   const railways = railPart.made;
   // Cars parked in the lots and along the main streets downtown, solid to the player (parked-cars.js)
   const parkedPart = live.keep('parkedCars', () => cityPart((g) => buildParkedCars(g)), { inputs: [heights] });
@@ -255,7 +258,7 @@ async function initApp() {
     const g = groundHeight(o.x, o.z);
     allColliders.push({ minX: o.x - o.r, maxX: o.x + o.r, minZ: o.z - o.r, maxZ: o.z + o.r, minY: g - 1, maxY: g + 6, thin: true });
   }
-  const parts = [grid, boroughPart, landmarks, blocks, details, traffic, highway, roadPaint, controlsPart, signsPart, railPart, parkedPart];
+  const parts = [grid, outskirtsPart, landmarks, blocks, details, traffic, highway, roadPaint, controlsPart, signsPart, railPart, parkedPart];
   for (const part of parts) {
     scene.add(part.group);
     cullAlso(part.culled);
@@ -380,8 +383,8 @@ async function initApp() {
     for (const light of smallLights) light.removeFromParent();
     console.log(`[quality] removed ${smallLights.length} small lights`);
   }
-  if (!QUALITY.boroughs) {
-    const group = scene.getObjectByName('Boroughs');
+  if (!QUALITY.outskirts) {
+    const group = scene.getObjectByName('Outskirts');
     if (group) group.visible = false;
   }
   console.log(`[quality] ${JSON.stringify(QUALITY)}`);
@@ -732,9 +735,9 @@ async function initApp() {
     if (btn && e.detail > 0) btn.blur();
   });
 
-  // Where you are: the place's name over its street corner, drawn as a pair of NYC street-name signs
+  // Where you are: the place's name over its street corner, drawn as a pair of green street-name signs
   const roadNames = new Set(ROADS.map((r) => r.name));
-  const placeNames = new Set(NYC_LANDMARKS.map((l) => l.name));
+  const placeNames = new Set(LANDMARKS.map((l) => l.name));
   let locationText = '';
   function renderLocation(label) {
     if (!elLocation || label === locationText) return;
@@ -791,7 +794,7 @@ async function initApp() {
     return destination;
   }
 
-  const mapSystem = new NYCMapSystem({
+  const mapSystem = new CityMapSystem({
     controllerManager,
     cameraSystem,
     trafficSystem,
@@ -1050,7 +1053,7 @@ async function initApp() {
       savePlayerState();
       nextPlayerSave = now + 5000;
     }
-    if (boroughs.update) boroughs.update(elapsed); // Roosevelt Island Tramway cabins
+    if (outskirts.update) outskirts.update(elapsed);
     cityBlocks.update(cameraSystem.currentPos.x, cameraSystem.currentPos.z);
     if (cityBlocks.updateLights) cityBlocks.updateLights(cameraSystem.camera);
     if (streetDetails.update) streetDetails.update(cameraSystem.camera);

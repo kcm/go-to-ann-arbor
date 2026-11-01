@@ -1,12 +1,15 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 import { groundHeight } from './terrain.js';
+import { localTime } from './theride.js';
 
 // Ann Arbor's railroads (GEO.rail from build-annarbor.py, OpenStreetMap): every piece of track as ballast, ties and two
 // steel rails, on the ground's heights smoothed along the line, and level across its bridges; and a train on each
-// long line, running back and forth: Amtrak's Wolverine (a locomotive and five silver cars) on the Michigan Line along
-// the Huron, an Ann Arbor Railroad freight (two engines, boxcars and hoppers), and a short Great Lakes Central one.
+// long line: Amtrak's Wolverine (a locomotive and five silver cars) on the Michigan Line along the Huron, coming through
+// on Amtrak's timetable (data/wolverine.json, build-wolverine.py from Amtrak's GTFS feed) and stopping at the Depot
+// Street station; an Ann Arbor Railroad freight (two engines, boxcars and hoppers) and a short Great Lakes Central one
+// running back and forth.
 
 const GAUGE = 1.435, TIE_STEP = 0.6, TOP = 0.42; // top of the rails above the ground
 
@@ -175,13 +178,17 @@ const CAR_KINDS = {
     return L;
   }
 };
+// Ann Arbor's station on Depot Street (city-config.js's landmark), and how long before and after its stop a train is
+// looked for on the line (time enough to cross the town at line speed)
+const STATION = { x: 432, z: -905 };
+const RUN_WINDOW = 420;
 const TRAINS = {
-  'Michigan Subdivision': { cars: ['charger', 'coach', 'coach', 'coach', 'coach', 'coach'], speed: 22, wait: 25, horn: true },
+  'Michigan Subdivision': { cars: ['charger', 'coach', 'coach', 'coach', 'coach', 'coach'], speed: 22, wait: 25, horn: true, timetable: true },
   'Ann Arbor Railroad': { cars: ['diesel', 'diesel', 'boxcar', 'hopper', 'hopper', 'boxcar:0x2f5d3a', 'tank', 'tank', 'hopper:0x6b5a3a', 'boxcar', 'hopper', 'boxcar:0x3a4f6b'], speed: 11, wait: 40, horn: true },
   'Great Lakes Central Railroad': { cars: ['diesel', 'boxcar', 'tank'], speed: 6, wait: 60, horn: false }
 };
 
-function buildRailways(group, crossings = []) {
+function buildRailways(group, crossings = [], wolverine = null) {
   const rail = GEO.rail;
   const result = { group, trains: [], update() {} };
   if (!rail) return result;
@@ -268,6 +275,22 @@ function buildRailways(group, crossings = []) {
     const length = cars.reduce((s, c) => s + c.L + 1, 0);
     const train = { name, path, cars, length, speed: spec.speed, wait: spec.wait, horn: spec.horn,
       s: Math.min(path.length - 1, length + (path.length - length) * 0.3), dir: 1, v: 0, waiting: 0, sinceHorn: 999 };
+    if (spec.timetable && wolverine?.trips?.length) {
+      // its platform: the point of the line nearest the Depot Street station, and which way along it is west
+      let best = Infinity;
+      const o = {};
+      for (let s = 0; s < path.length; s += 2) {
+        sample(path, s, o);
+        const d = (o.x - STATION.x) ** 2 + (o.z - STATION.z) ** 2;
+        if (d < best) { best = d; train.platform = s; }
+      }
+      const a = {}, b = {};
+      sample(path, Math.max(0, train.platform - 50), a);
+      sample(path, Math.min(path.length, train.platform + 50), b);
+      train.west = b.x < a.x ? 1 : -1;
+      train.timetable = wolverine.trips;
+      train.moving = false;
+    }
     result.trains.push(train);
   }
   for (const [flat, bridge] of rail.tracks) if (bridge) bridges.push(railPath(flat, true, 4));
@@ -295,6 +318,56 @@ function buildRailways(group, crossings = []) {
       s -= train.dir * (car.L + 1);
     }
   };
+  // A train on Amtrak's timetable: the stop at Ann Arbor in service today nearest the time now puts
+  // it braking down the line toward the platform, standing there between its arrival and departure, or pulling away;
+  // with no train due it is off the end of the line, out of sight
+  const runTimetable = (t, dt, onHorn) => {
+    const now = localTime(Date.now());
+    let stop = null, into = Infinity;
+    for (const trip of t.timetable) {
+      const [, , , arr, dep, days, from, to] = trip;
+      if (now.date < from || now.date > to || days[now.weekday] !== '1') continue;
+      // seconds after its arrival (negative before it), looked at within the time it takes to cross the line
+      const since = now.sec - arr;
+      if (since < -RUN_WINDOW || now.sec - dep > RUN_WINDOW) continue;
+      if (Math.abs(since) < Math.abs(into)) { into = since; stop = trip; }
+    }
+    if (!stop) {
+      t.s = -1e9; // gates stay up
+      t.v = 0;
+      for (const car of t.cars) car.mesh.visible = false;
+      t.moving = false;
+      return;
+    }
+    const [, way, , arr, dep] = stop;
+    const dir = way === 'west' ? t.west : -t.west;
+    if (dir !== t.dir) { t.dir = dir; t.cars.reverse(); }
+    // the head stops with the train along the platform
+    const stopAt = t.platform + dir * t.length * 0.5;
+    const V = t.speed, BRAKE = 0.55, PULL = 0.4;
+    const ahead = (tau) => tau < V / BRAKE ? 0.5 * BRAKE * tau * tau : V * V / (2 * BRAKE) + V * (tau - V / BRAKE);
+    const gone = (tau) => tau < V / PULL ? 0.5 * PULL * tau * tau : V * V / (2 * PULL) + V * (tau - V / PULL);
+    let s, v;
+    if (now.sec < arr) { const tau = arr - now.sec; s = stopAt - dir * ahead(tau); v = Math.min(V, BRAKE * tau); }
+    else if (now.sec < dep) { s = stopAt; v = 0; }
+    else { const tau = now.sec - dep; s = stopAt + dir * gone(tau); v = Math.min(V, PULL * tau); }
+    // between the timetable's whole seconds the train carries on at its speed, so it never moves in steps
+    if (t.stopKey === stop && Math.abs(s - t.s) < 40) t.s += Math.max(-4, Math.min(4, s + dir * v * (t.frac = (t.frac || 0) + dt) - t.s)) * Math.min(1, dt * 8);
+    else t.s = s;
+    if (t.lastSec !== now.sec) { t.lastSec = now.sec; t.frac = 0; }
+    t.stopKey = stop;
+    const inside = t.s - dir * t.length > -50 && t.s - dir * t.length < t.path.length + 50 && t.s > -50 && t.s < t.path.length + 50;
+    for (const car of t.cars) car.mesh.visible = inside;
+    if (!inside) { t.moving = false; return; }
+    t.v = v;
+    t.waiting = v === 0 ? 1 : 0;
+    // the horn as it pulls out, and now and then on the way
+    if (t.horn && onHorn && ((v > 0 && !t.moving && now.sec >= dep) || (v > 4 && t.sinceHorn > 45))) {
+      sample(t.path, t.s, at); onHorn(at); t.sinceHorn = 0;
+    }
+    t.moving = v > 0;
+    place(t);
+  };
   // bridges' boxes, to skip the search away from them
   const bridgeBoxes = bridges.map((b) => [Math.min(...b.x) - 4, Math.max(...b.x) + 4, Math.min(...b.z) - 4, Math.max(...b.z) + 4]);
   const nearBridge = (o) => bridgeBoxes.some(([x0, x1, z0, z1]) => o.x > x0 && o.x < x1 && o.z > z0 && o.z < z1);
@@ -307,6 +380,7 @@ function buildRailways(group, crossings = []) {
   result.update = (dt, onHorn) => {
     for (const t of result.trains) {
       t.sinceHorn += dt;
+      if (t.timetable) { runTimetable(t, dt, onHorn); continue; }
       if (t.waiting > 0) {
         t.waiting -= dt;
         if (t.waiting <= 0) {

@@ -19,7 +19,7 @@
     }
   </script>
   <!-- Fetch the city modules in parallel before stylesheets; the module graph controls evaluation order. -->
-  <link rel="modulepreload" href="./js/nyc-geodata.js" />
+  <link rel="modulepreload" href="./js/city-geodata.js" />
   <link rel="modulepreload" href="./js/terrain.js" />
   <link rel="modulepreload" href="./js/city-config.js" />
   <link rel="modulepreload" href="./js/tsl-materials.js" />
@@ -36,7 +36,6 @@
   <link rel="modulepreload" href="./js/pedestrians.js" />
   <link rel="modulepreload" href="./js/lighting.js" />
   <link rel="modulepreload" href="./js/city-grid.js" />
-  <link rel="modulepreload" href="./js/boroughs.js" />
   <link rel="modulepreload" href="./js/buildings.js" />
   <link rel="modulepreload" href="./js/building-details.js" />
   <link rel="modulepreload" href="./js/building-geodata.js" />
@@ -47,8 +46,6 @@
   <link rel="modulepreload" href="./js/landmarks.js" />
   <link rel="modulepreload" href="./js/street-details.js" />
   <link rel="modulepreload" href="./js/street-props.js" />
-  <link rel="modulepreload" href="./js/subway-geodata.js" />
-  <link rel="modulepreload" href="./js/subway-entrances.js" />
   <link rel="modulepreload" href="./js/road-network.js" />
   <link rel="modulepreload" href="./js/road-paint.js" />
   <link rel="modulepreload" href="./js/traffic.js" />
@@ -58,7 +55,7 @@
   <link rel="modulepreload" href="./js/touch-controls.js" />
   <link rel="modulepreload" href="./js/gamepad-controls.js" />
   <link rel="modulepreload" href="./js/cameras.js" />
-  <link rel="modulepreload" href="./js/nyc-map.js" />
+  <link rel="modulepreload" href="./js/city-map.js" />
   <link rel="modulepreload" href="./js/scene-culling.js" />
   <link rel="modulepreload" href="./js/post-processing.js" />
   <link rel="modulepreload" href="./js/audio-synthesis.js" />
@@ -347,7 +344,7 @@
   </section>
 
 
-<div id="lamp-credit">Based on <a href="https://github.com/mrdoob/slop-newyork" target="_blank" rel="noopener">Slop New York</a> by Mr.doob · <a href="https://lamp.dev/?repo=https://github.com/mrubens/go-to-ann-arbor&amp;commit=2ef39aef4a2feb95f99e785b3c0e55bdc22bbba9&amp;from=page" target="_blank" rel="noopener">Open in Lamp</a> · <a href="#" id="lamp-remix-open">Remix…</a></div>
+<div id="lamp-credit">Based on <a href="https://github.com/mrdoob/slop-newyork" target="_blank" rel="noopener">Slop New York</a> by Mr.doob · <a href="https://lamp.dev/?repo=https://github.com/mrubens/go-to-ann-arbor&amp;commit=ecf8a58b175e39f1cb8c3593dd14a4013b700878&amp;from=page" target="_blank" rel="noopener">Open in Lamp</a> · <a href="#" id="lamp-remix-open">Remix…</a></div>
 <div id="lamp-remix" hidden>
   <div class="lamp-remix-head">Make Go To Ann Arbor yours<button type="button" id="lamp-remix-close" aria-label="Close">×</button></div>
   <p>Say what you'd change. Lamp makes the change and keeps your data.</p>
@@ -356,7 +353,7 @@
   <button type="button" id="lamp-remix-go" disabled>Continue with Lamp</button>
   <p class="lamp-remix-note">Opens lamp.dev with your request. Lamp is a free Mac app; it opens a copy of Go To Ann Arbor with your request ready to send.</p>
 </div>
-<script type="application/json" id="lamp-remix-target">{"link":null,"origin":{"commit":"2ef39aef4a2feb95f99e785b3c0e55bdc22bbba9","repo":"https:\/\/github.com\/mrubens\/go-to-ann-arbor"},"request":"Make an app like Go To Ann Arbor: Explore Ann Arbor, Michigan in 3D on foot, by car, by bike or by helicopter.\n\nThen: {ask}"}</script>
+<script type="application/json" id="lamp-remix-target">{"link":null,"origin":{"commit":"ecf8a58b175e39f1cb8c3593dd14a4013b700878","repo":"https:\/\/github.com\/mrubens\/go-to-ann-arbor"},"request":"Make an app like Go To Ann Arbor: Explore Ann Arbor, Michigan in 3D on foot, by car, by bike or by helicopter.\n\nThen: {ask}"}</script>
 <script>
 (function(){var o=document.getElementById('lamp-remix-open'),p=document.getElementById('lamp-remix'),a=document.getElementById('lamp-remix-ask'),g=document.getElementById('lamp-remix-go');
 if(!o||!p||!a||!g)return;var t=JSON.parse(document.getElementById('lamp-remix-target').textContent||'{}');

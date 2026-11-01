@@ -1,4 +1,4 @@
-import { blockAt, districtAt, NYC_LANDMARKS } from './city-config.js';
+import { blockAt, districtAt, LANDMARKS } from './city-config.js';
 import { createPedestrianRoutes } from './pedestrian-routes.js';
 import { PersonCrowd, PersonRig, PEDESTRIAN_DIVE_DURATION } from './pedestrians.js';
 import { groundHeight } from './terrain.js';
@@ -23,7 +23,7 @@ const STREET_CROWD = [
   [/\b(Liberty|Washington|Maynard|William|Thayer|Fletcher|Church|Forest|Fourth Ave|Detroit)\b/, 0.8],
   [/\b(Fifth|Ashley|Division|Huron|Ann|Catherine|Kingsley)\b/, 0.6]
 ];
-const DIAG = NYC_LANDMARKS.find((l) => l.id === 'diag') || { x: 900, z: 200 };
+const DIAG = LANDMARKS.find((l) => l.id === 'diag') || { x: 900, z: 200 };
 function edgeCrowd(e) {
   if (e.crowd !== undefined) return e.crowd;
   const mx = (e.from.x + e.to.x) * 0.5, mz = (e.from.z + e.to.z) * 0.5;

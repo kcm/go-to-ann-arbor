@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 import { groundHeight } from './terrain.js';
 
 // Lamp: a sign over each named shop, restaurant, cafe and bar from OpenStreetMap (GEO.signs, placed by the generator on

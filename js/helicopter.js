@@ -20,7 +20,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { LoftGeometry } from 'three/addons/geometries/LoftGeometry.js';
 import { part } from './vehicles.js';
 
-// The player's Manhattan sightseeing helicopter: a lofted fuselage with tube skids, rotors and its TSL material.
+// The player's sightseeing helicopter: a lofted fuselage with tube skids, rotors and its TSL material.
 
 const _down = new THREE.Vector3(0, -1, 0);
 

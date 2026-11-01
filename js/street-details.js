@@ -11,7 +11,7 @@ import {
   SIGNAL_TIMING,
   blockAt,
   fromOldFrame,
-  CENTRAL_PARK_BOUNDS as CPB,
+  BIG_PARK_BOUNDS as CPB,
   BLOCKS,
   LANDMARK_SITES
 } from './city-config.js';
@@ -19,11 +19,10 @@ import { cityUniforms, createSteamMaterial, createTreeGrateMaterial, createGodRa
 import { createTreeField } from './trees.js';
 import { REAL_TREES, REAL_TREE_KINDS, REAL_TREE_HEIGHTS } from './tree-geodata.js';
 import { placeStreetTrees } from './tree-placements.js';
-import { createSubwayEntranceParts, createFoodCartParts } from './street-props.js';
-import { createSubwayEntrances } from './subway-entrances.js';
-import { pavedPlazaRects, centralParkClearings, parkTreeSites, parkLampSites } from './city-grid.js';
+import { createFoodCartParts } from './street-props.js';
+import { pavedPlazaRects, bigParkClearings, parkTreeSites, parkLampSites } from './city-grid.js';
 import { bryantParkLawn } from './landmarks.js';
-import { GEO } from './nyc-geodata.js';
+import { GEO } from './city-geodata.js';
 import { createParkLampPoolMaterial } from './tsl-materials.js';
 
 // Instanced street furniture, traffic signals, trees and nearby light pools.
@@ -106,7 +105,7 @@ function createWalkSignalMaterial(clock) {
 
 function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   const group = new THREE.Group();
-  group.name = 'ManhattanStreetDetails';
+  group.name = 'StreetDetails';
 
   const dummy = new THREE.Object3D();
   const unitBox = new THREE.BoxGeometry(1, 1, 1);
@@ -736,29 +735,6 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   if (totalSteamSprites > 0) group.add(steamInstancedSprites);
 
   // =========================================================================
-  // 4. SUBWAY ENTRANCES (Ann Arbor has none: the list is empty)
-  // =========================================================================
-  const subwaySites = createSubwayEntrances(colliders, footprints);
-  const subwayMatrices = [];
-  const subwayColliders = [];
-  for (const { x, y, z, yaw } of subwaySites) {
-    const cs = Math.cos(yaw), sn = Math.sin(yaw);
-    subwayMatrices.push(new THREE.Matrix4().makeRotationY(yaw).setPosition(x, y, z));
-    const hw = 1.21, hd = 3.16;
-    const ex = Math.abs(cs) * hw + Math.abs(sn) * hd;
-    const ez = Math.abs(sn) * hw + Math.abs(cs) * hd;
-    addFootprint(x, z, ex * 2, ez * 2, true);
-    subwayColliders.push({
-      minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez, minY: 0.22, maxY: y + 2.8,
-      obb: { cx: x, cz: z, hx: hw, hz: hd, cs, sn }
-    });
-    streetPointSites.push({ x: x + sn * 2.98, y: y + 2.65, z: z + cs * 2.98, color: 0xb9e8c8, intensity: 12, dist: 8.5 });
-  }
-  for (const part of createSubwayEntranceParts()) {
-    addMatrixArrayInstanced(part.geometry, part.material, subwayMatrices, part.castShadow);
-  }
-
-  // =========================================================================
   // 5. STREET FOOD CARTS (none in Ann Arbor)
   // =========================================================================
   // Keep the whole prop on the sidewalk, outside building lots.
@@ -774,8 +750,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
         }
       }
       return !block.rects.some(([x0, x1, z0, z1]) =>
-        px + hw > x0 && px - hw < x1 && pz + hd > z0 && pz - hd < z1)
-        && !subwayColliders.some((b) => px + hw > b.minX && px - hw < b.maxX && pz + hd > b.minZ && pz - hd < b.maxZ);
+        px + hw > x0 && px - hw < x1 && pz + hd > z0 && pz - hd < z1);
     };
     if (fits(x, z)) return { x, z };
     for (let r = 2; r <= 40; r += 2) {
@@ -1071,7 +1046,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
     }
   }
 
-  // B. Central Park (59th to 110th St, 5th Ave to Central Park West; city-config.js CENTRAL_PARK_BOUNDS), on the lawn
+  // B. Central Park (59th to 110th St, 5th Ave to Central Park West; city-config.js BIG_PARK_BOUNDS), on the lawn
   const cp = CPB;
   // B1. Central Park South (59th St) dense woodland border
   for (let tx = cp.minX + 8; tx <= cp.maxX - 8; tx += 9.5) {
@@ -1091,7 +1066,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   }
 
   // B3. The Mall & Literary Walk quadruple row of towering American Elms (66th to 72nd St)
-  const cpClear = centralParkClearings;
+  const cpClear = bigParkClearings;
   const mall = cpClear && cpClear.mall;
   if (mall) {
     for (let tz = mall.z0 + 4; tz <= mall.z1 - 4; tz += 9.5) {
@@ -1168,7 +1143,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   let sidewalkTreePositions = placeStreetTrees(REAL_TREES, treePositions,
     (x, z) => !inPlaza(x, z, 1.5) && isClearOfPoles(x, z, 2.2), REAL_TREE_KINDS, REAL_TREE_HEIGHTS);
   for (const tree of sidewalkTreePositions) treePositions.push(tree);
-  const treeField = createTreeField(scene, treePositions, [...colliders, ...subwayColliders]);
+  const treeField = createTreeField(scene, treePositions, colliders);
   group.add(treeField.group);
   sidewalkTreePositions = sidewalkTreePositions.filter((t) => treeField.sites.has(t));
   console.info(`[streetDetails] ${treeField.stats.trees} trees (${sidewalkTreePositions.length} street trees)`);

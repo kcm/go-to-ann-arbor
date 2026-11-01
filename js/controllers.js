@@ -1,8 +1,8 @@
 import * as THREE from 'three/webgpu';
 import {
-  ISLAND_BOUNDS,
-  CENTRAL_PARK_BOUNDS,
-  getIslandBoundsAtZ,
+  TOWN_BOUNDS,
+  BIG_PARK_BOUNDS,
+  getTownBoundsAtZ,
   isTypingInField,
   blockAt,
   streetZ
@@ -450,10 +450,10 @@ class ThirdPersonControllerManager {
     const cameraBack = Math.cos(0.09) * entity.chaseDistance;
     const cameraUp = entity.chaseHeight + Math.sin(0.09) * entity.chaseDistance * 0.85;
     const clampPoint = (px, pz) => {
-      pz = Math.max(ISLAND_BOUNDS.minZ + (heli ? -6000 : 30), Math.min(ISLAND_BOUNDS.maxZ + margin, pz));
-      px = Math.max(ISLAND_BOUNDS.minX - margin, Math.min(ISLAND_BOUNDS.maxX + margin, px));
-      if (!heli && getIslandBoundsAtZ) {
-        const shore = getIslandBoundsAtZ(pz);
+      pz = Math.max(TOWN_BOUNDS.minZ + (heli ? -6000 : 30), Math.min(TOWN_BOUNDS.maxZ + margin, pz));
+      px = Math.max(TOWN_BOUNDS.minX - margin, Math.min(TOWN_BOUNDS.maxX + margin, px));
+      if (!heli && getTownBoundsAtZ) {
+        const shore = getTownBoundsAtZ(pz);
         const west = shore.westX + 8, east = shore.eastX - 8;
         if (west > east) return null;
         px = Math.max(west, Math.min(east, px));
@@ -480,8 +480,8 @@ class ThirdPersonControllerManager {
     const origin = clampPoint(x, z);
     if (clear(origin)) return origin;
     // Four-metre rings cover nearby streets and courtyards, with bounded work even for a click inside a large block.
-    const cx = origin ? origin.x : Math.max(ISLAND_BOUNDS.minX, Math.min(ISLAND_BOUNDS.maxX, x));
-    const cz = origin ? origin.z : Math.max(ISLAND_BOUNDS.minZ + 30, Math.min(ISLAND_BOUNDS.maxZ, z));
+    const cx = origin ? origin.x : Math.max(TOWN_BOUNDS.minX, Math.min(TOWN_BOUNDS.maxX, x));
+    const cz = origin ? origin.z : Math.max(TOWN_BOUNDS.minZ + 30, Math.min(TOWN_BOUNDS.maxZ, z));
     for (let distance = 4; distance <= 256; distance += 4) {
       for (let i = 0; i < 32; i++) {
         const angle = i * Math.PI / 16;
@@ -520,7 +520,7 @@ class ThirdPersonControllerManager {
       mesh: root,
       crowd,
       rig,
-      position: new THREE.Vector3(-30.2, ISLAND_BOUNDS.sidewalkHeight, SPAWN_Z + 12),
+      position: new THREE.Vector3(-30.2, TOWN_BOUNDS.sidewalkHeight, SPAWN_Z + 12),
       heading: Math.PI,
       speed: 0,
       verticalVel: 0,
@@ -797,7 +797,7 @@ class ThirdPersonControllerManager {
   }
 
   // =========================================================================
-  // 4. HELICOPTER (3D LOFTED MANHATTAN SIGHTSEEING TWIN-TURBINE CHOPPER)
+  // 4. HELICOPTER (3D LOFTED SIGHTSEEING TWIN-TURBINE CHOPPER)
   // =========================================================================
   createHelicopterEntity() {
     const root = new THREE.Group();
@@ -1107,8 +1107,8 @@ class ThirdPersonControllerManager {
   getGroundHeight(x, z, mode = 'person') {
     // Lamp: the ground's own height there (terrain.js), with what's laid on it
     const ground = groundHeight(x, z);
-    // Inside Central Park (5th Ave to Central Park West, 59th St to 110th St)
-    const cp = CENTRAL_PARK_BOUNDS;
+    // Inside a big park drawn on its own (none in Ann Arbor: city-config.js BIG_PARK_BOUNDS is far away)
+    const cp = BIG_PARK_BOUNDS;
     if (x > cp.minX && x < cp.maxX && z > cp.minZ && z < cp.maxZ) {
       return ground + 1.24;
     }
@@ -1118,7 +1118,7 @@ class ThirdPersonControllerManager {
       return lawn.top;
     }
     if (mode === 'person') {
-      return ground + (this.isPointOnSidewalk(x, z) ? ISLAND_BOUNDS.sidewalkHeight : 0.0);
+      return ground + (this.isPointOnSidewalk(x, z) ? TOWN_BOUNDS.sidewalkHeight : 0.0);
     }
     if (mode === 'kayak') return waterLevel(x, z) ?? ground;
     return ground;
@@ -1163,13 +1163,13 @@ class ThirdPersonControllerManager {
   }
 
   resolveHorizontalCollision(pos, radius, carEntity = null, entity = carEntity) {
-    // The detailed island (the helicopter may roam out over the harbour & the boroughs)
+    // The detailed town (the helicopter may roam out over the countryside around it)
     const heli = this.activeMode === 'helicopter';
     const m = heli ? 6000 : 0;
-    pos.x = Math.max(ISLAND_BOUNDS.minX - m, Math.min(ISLAND_BOUNDS.maxX + m, pos.x));
-    pos.z = Math.max(ISLAND_BOUNDS.minZ + (heli ? -6000 : 30), Math.min(ISLAND_BOUNDS.maxZ + m, pos.z));
-    if (this.activeMode !== 'helicopter' && getIslandBoundsAtZ) {
-      const shore = getIslandBoundsAtZ(pos.z);
+    pos.x = Math.max(TOWN_BOUNDS.minX - m, Math.min(TOWN_BOUNDS.maxX + m, pos.x));
+    pos.z = Math.max(TOWN_BOUNDS.minZ + (heli ? -6000 : 30), Math.min(TOWN_BOUNDS.maxZ + m, pos.z));
+    if (this.activeMode !== 'helicopter' && getTownBoundsAtZ) {
+      const shore = getTownBoundsAtZ(pos.z);
       const minShoreX = shore.westX + 8.0;
       const maxShoreX = shore.eastX - 8.0;
       if (pos.x < minShoreX) {
