@@ -1469,3 +1469,11 @@ body.touch-enabled .pop-item { min-height: 44px; }
 .mta-bullet.app-logo.loader-bullet {
   border-radius: 14px;
 }
+
+/* A short line that comes and goes in the middle of the screen ("Slow down to get out") */
+.notice {
+  position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%);
+  padding: 14px 28px; border-radius: 14px; background: rgba(12, 16, 22, 0.78); color: #fff;
+  font: 600 30px/1.2 system-ui, sans-serif; pointer-events: none; opacity: 0; transition: opacity 0.25s; z-index: 50;
+}
+.notice.show { opacity: 1; }

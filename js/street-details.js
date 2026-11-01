@@ -194,14 +194,22 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   // Only nearby poles can conflict, even with street furniture across the whole island.
   const POLE_CELL = 8;
   const poleCells = new Map();
+  // Lamp: the pole being put up, so each piece of it is noted (own()) and it can be knocked over as one
+  let pole = null;
   function addPole(x, z, width) {
     const key = Math.floor(x / POLE_CELL) + ',' + Math.floor(z / POLE_CELL);
     let cell = poleCells.get(key);
     if (!cell) poleCells.set(key, cell = []);
-    cell.push({ x, z, width });
+    cell.push(pole = { x, z, width, parts: [] });
     // Poles stand on curbs: pedestrians avoid them, but they must not narrow the inferred road gaps.
     addFootprint(x, z, width, width, true);
   }
+
+  // A piece of the pole being put up: its matrix (dummy's) into `list`, noted on the pole
+  const own = (list) => {
+    pole?.parts.push(list, list.length);
+    list.push(dummy.matrix.clone());
+  };
 
   const plazaRects = pavedPlazaRects || [];
   const inPlaza = (x, z, m = 1.0) =>
@@ -283,19 +291,19 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
         dummy.rotation.set(0, 0, 0);
         dummy.scale.set(0.14, 6.4, 0.14);
         dummy.updateMatrix();
-        poleMatrices.push(dummy.matrix.clone());
+        own(poleMatrices);
 
         // NYC DOT Green Street Name Sign Blade mounted on pole (y = 4.65m)
         dummy.position.set(px + c.armDir * 0.68, 4.65, pz);
         dummy.scale.set(1.38, 0.34, 0.08);
         dummy.updateMatrix();
-        streetBladeMatrices.push(dummy.matrix.clone());
+        own(streetBladeMatrices);
 
         // Pedestrian "WALK / DON'T WALK" signal on the pole at crosswalk level (y = 3.15m), facing across the street
         dummy.position.set(px + c.armDir * 0.24, 3.15, pz);
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
-        walkBoxMatrices.push(dummy.matrix.clone());
+        own(walkBoxMatrices);
         // These panels share the avenue WALK phase; rejected/unplaced poles never become sound sources.
         audioSignals.push({ x: dummy.position.x, y: dummy.position.y, z: dummy.position.z, isAvenue: true });
 
@@ -304,14 +312,14 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
         dummy.position.set(armX, 6.1, pz);
         dummy.scale.set(6.5, 0.11, 0.11);
         dummy.updateMatrix();
-        armMatrices.push(dummy.matrix.clone());
+        own(armMatrices);
 
         // Intersection corner cobra-head luminaire overhanging the crosswalk & corner sidewalk
         const cornerLampX = px + c.armDir * 1.85;
         dummy.position.set(cornerLampX, 6.22, pz);
         dummy.scale.set(1, 1, 1);
         dummy.updateMatrix();
-        lampHeadMatrices.push(dummy.matrix.clone());
+        own(lampHeadMatrices);
         cobraLampSites.push({
           x: cornerLampX,
           y: 6.18,
@@ -327,8 +335,8 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
           dummy.rotation.set(0, armDist < 4.0 ? 0 : Math.PI / 2, 0);
           dummy.scale.set(1, 1, 1);
           dummy.updateMatrix();
-          yellowBoxMatrices.push(dummy.matrix.clone());
-          (armDist < 4.0 ? aveLensMatrices : streetLensMatrices).push(dummy.matrix.clone());
+          own(yellowBoxMatrices);
+          own(armDist < 4.0 ? aveLensMatrices : streetLensMatrices);
         }
         dummy.rotation.set(0, 0, 0);
       }
@@ -357,7 +365,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
       dummy.rotation.set(0, 0, 0);
       dummy.scale.set(1, 1, 1);
       dummy.updateMatrix();
-      pedPostMatrices.push(dummy.matrix.clone());
+      own(pedPostMatrices);
       streetPointSites.push({ x: lx, y: 4.02, z: lz, color: 0xffe0aa, intensity: 28, dist: 14.0 });
       lightPools.push(lx, lz, 9);
       continue;
@@ -368,23 +376,24 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
     dummy.rotation.set(0, 0, 0);
     dummy.scale.set(0.12, 8.4, 0.12);
     dummy.updateMatrix();
-    poleMatrices.push(dummy.matrix.clone());
+    own(poleMatrices);
     dummy.position.set(lx + outX * 1.15, 8.2, lz + outZ * 1.15);
     dummy.rotation.set(0, armYaw, 0);
     dummy.scale.set(2.3, 0.09, 0.09);
     dummy.updateMatrix();
-    armMatrices.push(dummy.matrix.clone());
+    own(armMatrices);
     dummy.position.set(headX, 8.08, headZ);
     dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
-    lampHeadMatrices.push(dummy.matrix.clone());
+    own(lampHeadMatrices);
     dummy.rotation.set(0, 0, 0);
     cobraLampSites.push({ x: headX, y: 8.02, z: headZ, tx: lx + outX * 3.4, tz: lz + outZ * 3.4 });
     lightPools.push(headX + outX * 0.8, headZ + outZ * 0.8, 17);
   }
+  let poolMesh = null;
   if (lightPools.length) {
     const n = lightPools.length / 3;
-    const pools = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), createParkLampPoolMaterial(), n);
+    const pools = poolMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), createParkLampPoolMaterial(), n);
     const pm = new THREE.Matrix4();
     for (let k = 0; k < n; k++) {
       const w = lightPools[k * 3 + 2];
@@ -453,21 +462,21 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
           dummy.rotation.set(0, 0, 0);
           dummy.scale.set(0.12, 8.4, 0.12);
           dummy.updateMatrix();
-          poleMatrices.push(dummy.matrix.clone());
+          own(poleMatrices);
 
           // Upper luminaire bracket arm overhanging the street
           dummy.position.set(lx + outX * 1.15, 8.2, lz + outZ * 1.15);
           dummy.rotation.set(0, armYaw, 0);
           dummy.scale.set(2.3, 0.09, 0.09);
           dummy.updateMatrix();
-          armMatrices.push(dummy.matrix.clone());
+          own(armMatrices);
 
           // NYC DOT cobra-head LED luminaire on the end of the arm, lens facing the street
           dummy.position.set(headX, 8.08, headZ);
           dummy.rotation.set(0, armYaw, 0);
           dummy.scale.set(1, 1, 1);
           dummy.updateMatrix();
-          lampHeadMatrices.push(dummy.matrix.clone());
+          own(lampHeadMatrices);
           dummy.rotation.set(0, 0, 0);
 
           cobraLampSites.push({
@@ -499,7 +508,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
           dummy.rotation.set(0, 0, 0);
           dummy.scale.set(1, 1, 1);
           dummy.updateMatrix();
-          pedPostMatrices.push(dummy.matrix.clone());
+          own(pedPostMatrices);
           streetPointSites.push({
             x: px,
             y: 4.02,
@@ -530,7 +539,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
           dummy.rotation.set(0, 0, 0);
           dummy.scale.set(1, 1, 1);
           dummy.updateMatrix();
-          pedPostMatrices.push(dummy.matrix.clone());
+          own(pedPostMatrices);
           streetPointSites.push({
             x: px,
             y: 4.02,
@@ -544,9 +553,12 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
     }
   }
 
+  const meshesOf = new Map(); // matrix list -> the instanced meshes drawn from it
   function addMatrixArrayInstanced(geo, mat, matrices, castShadow = true) {
     if (matrices.length === 0) return;
     const inst = new THREE.InstancedMesh(geo, mat, matrices.length);
+    if (!meshesOf.has(matrices)) meshesOf.set(matrices, []);
+    meshesOf.get(matrices).push(inst);
     if (castShadow && !mat.isMeshBasicNodeMaterial && mat.type !== 'MeshBasicNodeMaterial' && !mat.transparent) {
       inst.castShadow = true;
       inst.receiveShadow = true;
@@ -1260,6 +1272,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
     for (let ix = Math.floor((cx - range) / LIGHT_CELL); ix <= Math.floor((cx + range) / LIGHT_CELL); ix++) {
       for (let iz = Math.floor((cz - range) / LIGHT_CELL); iz <= Math.floor((cz + range) / LIGHT_CELL); iz++) {
         for (const s of cells.get(ix + ',' + iz) || []) {
+          if (s.out) continue; // its pole was knocked over
           const dx = s.x - cx, dz = s.z - cz;
           const d2 = dx * dx + dz * dz + cy * cy;
           if (d2 > range * range) continue;
@@ -1347,8 +1360,34 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   scene.add(group);
   // Tree trunks and lamp posts, solid to the player: { x, z, r }
   const obstacles = [];
-  for (const t of treeField.sites) obstacles.push({ x: t.x, z: t.z, r: 0.22 });
-  for (const cell of poleCells.values()) for (const p of cell) obstacles.push({ x: p.x, z: p.z, r: Math.min(0.2, p.width * 0.4) });
+  // Lamp: each can be knocked over by a hard enough hit (knockdowns.js): a tree by its trunk and height, a pole with
+  // every piece of it (its instances in each mesh drawn from the lists own() noted)
+  for (const t of treeField.sites) {
+    const size = treeField.info(t);
+    obstacles.push({ x: t.x, z: t.z, r: 0.22, kind: 'tree', trunk: size.r, height: size.h, pose: (turn) => treeField.pose(t, turn) });
+  }
+  // A streetlight knocked over goes dark: its lamp (the head out on its arm, or the globe on top) and the pool under it
+  const pm0 = new THREE.Matrix4().makeScale(0, 0, 0);
+  function lightsOut(p) {
+    for (const [cells, reach] of [[cobraCells, 3.2], [pointCells, 0.6]]) {
+      const cx = Math.floor(p.x / LIGHT_CELL), cz = Math.floor(p.z / LIGHT_CELL);
+      for (let ix = cx - 1; ix <= cx + 1; ix++) for (let iz = cz - 1; iz <= cz + 1; iz++) {
+        for (const s of cells.get(ix + ',' + iz) || []) if (Math.hypot(s.x - p.x, s.z - p.z) < reach) s.out = true;
+      }
+    }
+    for (let k = 0; poolMesh && k < lightPools.length; k += 3) {
+      if (Math.hypot(lightPools[k] - p.x, lightPools[k + 1] - p.z) > 4.5) continue;
+      let mesh = poolMesh, i = k / 3;
+      while (mesh.userData.movedTo?.[i]) [mesh, i] = mesh.userData.movedTo[i];
+      mesh.setMatrixAt(i, pm0);
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+  for (const cell of poleCells.values()) for (const p of cell) {
+    const parts = [];
+    for (let k = 0; k < p.parts.length; k += 2) for (const mesh of meshesOf.get(p.parts[k]) || []) parts.push(mesh, p.parts[k + 1]);
+    obstacles.push({ x: p.x, z: p.z, r: Math.min(0.2, p.width * 0.4), kind: p.width >= 0.5 ? 'signal' : 'lamp', height: 8, parts, out: () => lightsOut(p) });
+  }
   return { group, footprints, signalClock, signalIntersections, audioSignals, treeField, obstacles, update };
 }
 

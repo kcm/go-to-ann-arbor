@@ -952,6 +952,11 @@ function createTreeField(_scene, sites, colliders = []) {
   const farOf = new Array(capacity);
   const tier = new Uint8Array(capacity);
   const lod = new Uint8Array(capacity).fill(255);
+  // Lamp: each planted site's index, trunk radius and height (m), for knocking it over (pose())
+  const indexOf = new Map();
+  const trunkR = new Float32Array(capacity);
+  const treeH = new Float32Array(capacity);
+  let standing = null; // the matrices as planted, once one is posed
 
   // Shared geometry types per species, variant and level.
   const types = [];
@@ -994,6 +999,9 @@ function createTreeField(_scene, sites, colliders = []) {
     if (!clearOfBuildings(worldBounds)) return;
     const i = N++;
     plantedSites.add(t);
+    indexOf.set(t, i);
+    trunkR[i] = SPECIES[sp].trunk.r * dummy.scale.x;
+    treeH[i] = heightOf[sp][variant] * dummy.scale.y;
     dummy.matrix.toArray(mats, i * 16);
     const palette = (AUTUMN && SPECIES[sp].fall) || SPECIES[sp].tints;
     tint.setHex(palette[Math.floor(r3 * palette.length * 0.9999)]).multiplyScalar(0.82 + r1 * 0.36);
@@ -1304,7 +1312,24 @@ function createTreeField(_scene, sites, colliders = []) {
     triangles: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.triangles))),
     cards: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.cards)))
   };
-  return { group, material, atlas, update, meshes: instanced, stats, sites: plantedSites };
+  // A planted tree's trunk radius and height (m), or null
+  function info(site) {
+    const i = indexOf.get(site);
+    return i === undefined ? null : { r: trunkR[i], h: treeH[i] };
+  }
+  // Turns a planted tree by `turn` (a Matrix4 about its foot, in the world) from where it was planted: knocked over
+  const _m = new THREE.Matrix4();
+  function pose(site, turn) {
+    const i = indexOf.get(site);
+    if (i === undefined) return;
+    if (!standing) standing = mats.slice();
+    _m.fromArray(standing, i * 16).premultiply(turn).toArray(mats, i * 16);
+    dirtyCells.add(cellOf[i]);
+    dirtyCells.add(farOf[i]);
+    rebuild();
+  }
+
+  return { group, material, atlas, update, meshes: instanced, stats, sites: plantedSites, info, pose };
 }
 
 export { createTreeField, createLeafAtlas, buildTreeGeometries, SPECIES as TREE_SPECIES };

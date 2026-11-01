@@ -46,6 +46,8 @@ const MAP = {
   mainRoads: '#3a434f',
   highway: '#b27a35',
   route: '#ffc21a',
+  bike: '#43d17f', // bike lanes, shown while cycling
+  bikePath: '#2fa565',
   search: '#5fd0ff',
   halo: 'rgba(8, 11, 15, 0.9)'
 };
@@ -191,6 +193,29 @@ function mapLayers() {
     if (r.highway) {
       if (!/Underpass|Tunnel/.test(r.name)) addLine(L.highways, r.pts);
     } else if (r.w >= 15) L.mainRoads.line(r.pts);
+  }
+
+  // Bike lanes painted on the streets (OpenStreetMap cycleway*: GEO.roadGraph links' bike bits, 1 and 2 a lane, 4 and 8
+  // shared-lane arrows) and the paved paths and trails a bike can ride (GEO.trails, not the dirt ones), shown while cycling
+  L.bikeLanes = new TiledLayer(1000);
+  L.bikeShared = new TiledLayer(1000);
+  L.bikePaths = new TiledLayer(1000);
+  const RG = GEO.roadGraph;
+  if (RG) {
+    const at = (i) => ({ x: RG.nodes[i * 2], z: RG.nodes[i * 2 + 1] });
+    for (const [a, b, , , , , inner, , bike = 0] of RG.links) {
+      if (!(bike & 15)) continue;
+      const pts = [at(a)];
+      for (let k = 0; k < inner.length; k += 2) pts.push({ x: inner[k], z: inner[k + 1] });
+      pts.push(at(b));
+      (bike & 3 ? L.bikeLanes : L.bikeShared).line(pts);
+    }
+  }
+  for (const t of GEO.trails || []) {
+    if (t[0] || t[1] < 2.4) continue; // dirt, or a footpath
+    const pts = [];
+    for (let k = 2; k + 1 < t.length; k += 2) pts.push({ x: t[k], z: t[k + 1] });
+    L.bikePaths.line(pts);
   }
 
   // The Huron River and its ponds, over the land
@@ -761,6 +786,20 @@ class CityMapSystem {
       L.mainRoads.each(v, (p) => ctx.stroke(p));
     }
 
+    // 7b. On the bike: the bike lanes (solid), shared lanes (dashed) and the paved paths (thin)
+    if (this.controllerManager?.activeMode === 'cyclist') {
+      ctx.strokeStyle = MAP.bikePath;
+      ctx.lineWidth = Math.max(px(1.4), 2.5);
+      L.bikePaths.each(v, (p) => ctx.stroke(p));
+      ctx.strokeStyle = MAP.bike;
+      ctx.setLineDash([Math.max(px(4), 9), Math.max(px(4), 9)]);
+      ctx.lineWidth = Math.max(px(1.8), 3);
+      L.bikeShared.each(v, (p) => ctx.stroke(p));
+      ctx.setLineDash([]);
+      ctx.lineWidth = Math.max(px(2.6), 4.5);
+      L.bikeLanes.each(v, (p) => ctx.stroke(p));
+    }
+
     // 8. Freeways
     ctx.strokeStyle = MAP.highway;
     ctx.lineWidth = Math.max(px(isMinimap ? 2.4 : 1.6), 14);
@@ -887,8 +926,9 @@ class CityMapSystem {
     // edge or the zoom drifts (or the buildings arrive)
     const fp = footprintLayers(this.allBlocks);
     const version = fp ? fp.version : 0;
+    const bikeView = this.controllerManager.activeMode === 'cyclist';
     let c = this.miniCache;
-    if (!c || c.version !== version || Math.abs(scale / c.s - 1) > 0.12 ||
+    if (!c || c.version !== version || c.bike !== bikeView || Math.abs(scale / c.s - 1) > 0.12 ||
       Math.abs(px - c.cx) > w / c.s - w / (2 * scale) - 8 / scale ||
       Math.abs(pz - c.cz) > h / c.s - h / (2 * scale) - 8 / scale) {
       if (!c) {
@@ -901,6 +941,7 @@ class CityMapSystem {
       c.cz = pz;
       c.s = scale;
       c.version = version;
+      c.bike = bikeView;
       c.ctx.setTransform(1, 0, 0, 1, 0, 0);
       c.ctx.fillStyle = MAP.water;
       c.ctx.fillRect(0, 0, bw * 2, bh * 2);

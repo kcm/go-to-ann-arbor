@@ -51,6 +51,22 @@ const CAR_DRIVE = {
   rolling: 0.18, drag: 0.0012, coast: 0.6, brake: 9,
   wheelbase: 2.76, grip: 9.5, cornering: 10.5 // Wheelbase (m), tire and steering acceleration limits (m/s²).
 };
+// How each kind of car drives, over CAR_DRIVE: top speed, pull, braking, tire grip, how tight it turns (cornering and
+// wheelbase), how quick the steering is (steer) and how far the body leans in a bend (roll) and pitches (pitch)
+const CAR_HANDLING = {
+  sedan: { speed: 38, acceleration: 5 },
+  taxi: { speed: 38, acceleration: 5 },
+  forester: { mass: 1600, speed: 36, acceleration: 4.6, grip: 10, cornering: 10.2, wheelbase: 2.67, roll: 0.014 }, // all-wheel drive
+  suv: { mass: 2000, speed: 34, acceleration: 4.2, brake: 8.5, grip: 8.6, cornering: 9, wheelbase: 2.8, steer: 8, roll: 0.016 },
+  minivan: { mass: 2000, speed: 33, acceleration: 3.8, brake: 8.5, grip: 8.4, cornering: 8.5, wheelbase: 3.03, steer: 7.5, roll: 0.015 },
+  pickup: { mass: 2400, speed: 35, acceleration: 4.8, powerSpeed: 11, brake: 8, grip: 7.8, cornering: 7.6, wheelbase: 3.7, steer: 7, roll: 0.017, pitch: 0.034 },
+  van: { mass: 2700, speed: 30, acceleration: 3.2, powerSpeed: 11, brake: 7.5, grip: 7.2, cornering: 7, wheelbase: 3.6, steer: 6.5, roll: 0.02, pitch: 0.036 },
+  sports: { mass: 1450, speed: 54, acceleration: 8.5, powerSpeed: 24, brake: 12, drag: 0.0009, grip: 13, cornering: 14, wheelbase: 2.72, steer: 14, roll: 0.007, pitch: 0.016 }
+};
+const carDrive = (kind) => ({ mass: 1500, steer: 10, roll: 0.012, pitch: 0.026, ...CAR_DRIVE, ...CAR_HANDLING[kind] });
+// Faster than this (m/s, about 14 km/h) and the doors stay shut
+const EXIT_SPEED = 4;
+
 const BICYCLE_DRIVE = {
   speed: 19, reverseSpeed: 4.5, acceleration: 9,
   rolling: 0.08, drag: 0.004, coast: 0.2, brake: 7.5 // Backward input is scaled to 0.6, giving 4.5 m/s² braking.
@@ -607,7 +623,7 @@ class ThirdPersonControllerManager {
 
     if (!root.parent) this.scene.add(root);
 
-    const kindName = { sedan: 'Sedan', suv: 'SUV', minivan: 'Minivan', pickup: 'Pickup', van: 'Van', forester: 'Forester' };
+    const kindName = { sedan: 'Sedan', suv: 'SUV', minivan: 'Minivan', pickup: 'Pickup', van: 'Van', forester: 'Forester', sports: 'Sports Car' };
     return {
       type: 'car',
       label: own ? 'Your Car' : `Borrowed ${kindName[look.kind] || 'Car'}`,
@@ -633,7 +649,8 @@ class ThirdPersonControllerManager {
       wheelSpin: 0,
       cameraTargetOffset: new THREE.Vector3(0, 0.96, 0),
       chaseDistance: 6.9,
-      chaseHeight: 2.12
+      chaseHeight: 2.12,
+      drive: carDrive(look.kind)
     };
   }
 
@@ -1069,6 +1086,7 @@ class ThirdPersonControllerManager {
     if (mode !== 'person') {
       const v = this.getActiveEntity();
       if (mode === 'helicopter' && v.position.y - this.helicopterFloor(v, v.position.y) > 0.8) return null;
+      if (mode === 'car' && Math.hypot(v.speed, v.vx || 0, v.vz || 0) > EXIT_SPEED) return { tooFast: true };
       v.speed = 0;
       if (mode === 'car') this.stopCar(v);
       if (mode === 'helicopter') v.verticalSpeed = 0;
@@ -1196,6 +1214,20 @@ class ThirdPersonControllerManager {
       if (heli && (isStadium(c) || c.thin || standing?.has(c))) continue;
       if (buildingContact(c, pos.x, pos.y, pos.z, body, contact)) {
         const { nx, nz, depth } = contact;
+        // a tree, pole or sign post the car hits hard enough goes over (knockdowns.js) instead of stopping it
+        if (carEntity && c.knock && this.knockdowns) {
+          const vx = sinH * carEntity.speed + (carEntity.vx || 0), vz = cosH * carEntity.speed + (carEntity.vz || 0);
+          const felled = this.knockdowns.hit(c, -(vx * nx + vz * nz), carEntity.drive?.mass || 1500, vx, vz);
+          if (felled) {
+            this.reportCollision(entity, c, 'building', pos.x - nx * 1.2, pos.y + 0.56, pos.z - nz * 1.2, nx, 0, nz, -(vx * nx + vz * nz));
+            carEntity.speed *= felled.keep;
+            carEntity.vx = (carEntity.vx || 0) * felled.keep;
+            carEntity.vz = (carEntity.vz || 0) * felled.keep;
+            carEntity.pitchVel = (carEntity.pitchVel || 0) + 1.2;
+            carEntity.heaveVel = (carEntity.heaveVel || 0) + 0.6;
+            continue;
+          }
+        }
         pos.x += nx * depth;
         pos.z += nz * depth;
 
@@ -1506,6 +1538,7 @@ class ThirdPersonControllerManager {
   updateCar(dt) {
     if (dt <= 0) return;
     const c = this.entities.car;
+    const D = c.drive || (c.drive = carDrive(this.carLook?.kind));
 
     let throttle = 0;
     if (this.keys.forward) throttle = this.keys.forward;
@@ -1524,7 +1557,7 @@ class ThirdPersonControllerManager {
     // Short steps keep grip, impacts and suspension consistent at different display rates.
     const steps = Math.ceil(dt * 120);
     const step = dt / steps;
-    const steerResponse = 1 - Math.exp(-10 * step);
+    const steerResponse = 1 - Math.exp(-D.steer * step);
     const yawResponse = 1 - Math.exp(-5 * step);
     const tireResponse = 1 - Math.exp(-4 * step);
     for (let i = 0; i < steps; i++) {
@@ -1532,22 +1565,22 @@ class ThirdPersonControllerManager {
       const vx = sin * c.speed + c.vx, vz = cos * c.speed + c.vz;
       const forward = vx * sin + vz * cos;
       const sideways = vx * cos - vz * sin;
-      const speed = driveSpeed(forward, throttle, step, CAR_DRIVE);
+      const speed = driveSpeed(forward, throttle, step, D);
       const acceleration = (speed - forward) / step;
       // Braking and cornering share tire grip; air resistance does not use it.
-      const tireAcceleration = acceleration + CAR_DRIVE.drag * forward * Math.abs(forward);
-      const grip = Math.sqrt(Math.max(0, CAR_DRIVE.grip ** 2 - tireAcceleration ** 2));
+      const tireAcceleration = acceleration + D.drag * forward * Math.abs(forward);
+      const grip = Math.sqrt(Math.max(0, D.grip ** 2 - tireAcceleration ** 2));
       // A handbrake slide preserves steering while reducing lateral grip; fade it out at low speed.
       const handbrake = forward * throttle < 0 ? Math.abs(throttle) * Math.min(1, Math.abs(forward) / 5) : 0;
       const lateralGrip = grip * (1 - 0.7 * handbrake);
-      const steeringGrip = grip + (CAR_DRIVE.grip - grip) * handbrake;
+      const steeringGrip = grip + (D.grip - grip) * handbrake;
 
       // Full lock at parking speeds, progressively less steering at road speeds.
-      const turn = CAR_DRIVE.wheelbase * CAR_DRIVE.cornering;
+      const turn = D.wheelbase * D.cornering;
       const maxSteer = Math.atan(turn / Math.max(speed * speed, turn / Math.tan(0.60)));
       c.steerAngle += (steerInput * maxSteer - c.steerAngle) * steerResponse;
       const yawLimit = steeringGrip / Math.max(2, Math.abs(speed));
-      const targetYaw = Math.max(-yawLimit, Math.min(yawLimit, speed * Math.tan(c.steerAngle) / CAR_DRIVE.wheelbase));
+      const targetYaw = Math.max(-yawLimit, Math.min(yawLimit, speed * Math.tan(c.steerAngle) / D.wheelbase));
       // Collision spin remains part of the yaw velocity; the tires gradually regain control.
       const yawStep = steeringGrip * 0.65 * step;
       c.angularVel += Math.max(-yawStep, Math.min(yawStep, (targetYaw - c.angularVel) * yawResponse));
@@ -1567,8 +1600,8 @@ class ThirdPersonControllerManager {
       c.position.z += (nextCos * c.speed + c.vz) * step;
       this.resolveHorizontalCollision(c.position, 1.35, c);
 
-      const targetPitch = -Math.max(-1, Math.min(1, acceleration / CAR_DRIVE.acceleration)) * 0.026;
-      const targetRoll = Math.max(-0.09, Math.min(0.09, correction / step * 0.012));
+      const targetPitch = -Math.max(-1, Math.min(1, acceleration / D.acceleration)) * D.pitch;
+      const targetRoll = Math.max(-0.09, Math.min(0.09, correction / step * D.roll));
       c.pitchVel += ((targetPitch - c.chassisPivot.rotation.x) * 68 - c.pitchVel * 11.2) * step;
       c.rollVel += ((targetRoll - c.chassisPivot.rotation.z) * 68 - c.rollVel * 11.2) * step;
       c.chassisPivot.rotation.x = Math.max(-0.22, Math.min(0.22, c.chassisPivot.rotation.x + c.pitchVel * step));

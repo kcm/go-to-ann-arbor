@@ -24,6 +24,7 @@ import { TouchControls } from './touch-controls.js';
 import { GamepadControls } from './gamepad-controls.js';
 import { CameraSystem, CAMERA_PRESETS } from './cameras.js';
 import { LightingSystem, sunTimes } from './lighting.js';
+import { createKnockdowns } from './knockdowns.js';
 import { CityMapSystem } from './city-map.js';
 import { setupSceneCulling, updateSceneCulling, cullAlso, showShadowStandIns } from './scene-culling.js';
 import { loadTerrain, setOnTerrain, groundHeight } from './terrain.js';
@@ -254,10 +255,17 @@ async function initApp() {
   allColliders.push(...parkedCars.colliders);
   // Tree trunks, lamp posts, signal poles and sign posts: thin and solid, so the car crashes into them and the bike
   // throws its rider (`thin`: the helicopter flies through them)
+  // and each goes over when a car hits it hard enough (knockdowns.js)
   for (const o of [...(details.made.obstacles || []), ...(controlsPart.made.obstacles || [])]) {
     const g = groundHeight(o.x, o.z);
-    allColliders.push({ minX: o.x - o.r, maxX: o.x + o.r, minZ: o.z - o.r, maxZ: o.z + o.r, minY: g - 1, maxY: g + 6, thin: true });
+    const knock = o.kind && (o.pose || o.parts?.length) ? { ...o, g, down: false } : null;
+    allColliders.push({ minX: o.x - o.r, maxX: o.x + o.r, minZ: o.z - o.r, maxZ: o.z + o.r, minY: g - 1, maxY: g + 6, thin: true, knock });
   }
+  const knockdowns = createKnockdowns({
+    onFall: (it, speed) => log(`[knock] a ${it.kind} went over at ${Math.round(speed * 3.6)} km/h`),
+    onLand: (it, spin) => audioSystem?.cue(it.kind === 'tree' ? 'thud' : 'crash',
+      { x: it.x + it.dx * it.height * 0.6, y: it.g, z: it.z + it.dz * it.height * 0.6 }, Math.min(1, 0.4 + spin * 0.2))
+  });
   const parts = [grid, outskirtsPart, landmarks, blocks, details, traffic, highway, roadPaint, controlsPart, signsPart, railPart, parkedPart];
   for (const part of parts) {
     scene.add(part.group);
@@ -272,6 +280,7 @@ async function initApp() {
   // 4. Initialize Third-Person Controllers (Person, Car, Cyclist, Helicopter) & Multi-Camera System
   await showLoadingStage('Preparing player, vehicles and controls...');
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders);
+  controllerManager.knockdowns = knockdowns;
   const isOwnLook = (look) => look.kind === 'forester' && look.hex === 0x16181b;
   // The cars taken from parking spots and left in them in earlier plays (a part kept over a change has them still)
   if (!parkedCars.history.length) {
@@ -572,12 +581,25 @@ async function initApp() {
 
   // F (or the controller's X, or the touch button): out of what the player is in, or into the nearest thing: their car,
   // the bike, the kayak, the helicopter on the ground, a parked car or one going by (which the player's car becomes)
+  // A short line in the middle of the screen that fades by itself (CSS .notice)
+  let noticeEl = null, noticeTimer = 0;
+  function showNotice(text) {
+    if (!noticeEl) { noticeEl = document.createElement('div'); noticeEl.className = 'notice'; document.body.appendChild(noticeEl); }
+    noticeEl.textContent = text;
+    noticeEl.classList.add('show');
+    noticeTimer = 1.6;
+  }
+  function tickNotice(dt) {
+    if (noticeTimer > 0 && (noticeTimer -= dt) <= 0) noticeEl?.classList.remove('show');
+  }
+
   function getInOrOut() {
     if (mapSystem.isFullMapOpen) return;
     const cm = controllerManager;
     const was = cm.activeMode;
     const choice = cm.enterOrExit(parkedCars, trafficSystem);
     if (!choice) return;
+    if (choice.tooFast) { showNotice('Slow down to get out'); return; }
     const car = cm.entities.car;
     if (choice.parked || choice.moving) {
       // the car the player had is left parked where it is
@@ -1025,6 +1047,8 @@ async function initApp() {
     const rawDt = f.dt;
     const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
     elapsed += dt;
+    tickNotice(dt);
+    knockdowns.update(dt);
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
     gamepadControls.supply(f.pads[0]);

@@ -101,9 +101,11 @@ function buildTrafficControls(group, network) {
   group.name = 'TrafficControls';
   const dummy = new THREE.Object3D();
   const lists = new Map(); // name -> matrices
+  let standing = null; // the pole or post being put up: each piece of it noted, so it can be knocked over as one
   const put = (name) => {
     dummy.updateMatrix();
     if (!lists.has(name)) lists.set(name, []);
+    standing?.parts.push(name, lists.get(name).length);
     lists.get(name).push(dummy.matrix.clone());
   };
   const onRoad = (x, z) => network.isRoadClear && network.isRoadClear(x, z, 0.2);
@@ -135,8 +137,8 @@ function buildTrafficControls(group, network) {
       dummy.rotation.set(0, Math.atan2(e.dx, e.dz), 0);
       dummy.position.set(px, g + ARM_Y / 2 + 0.1, pz);
       dummy.scale.set(0.15, ARM_Y + 0.3, 0.15);
+      obstacles.push(standing = { x: px, z: pz, r: 0.16, kind: 'signal', height: ARM_Y, parts: [] });
       put('pole');
-      obstacles.push({ x: px, z: pz, r: 0.16 });
       // the arm out over the lanes coming up to it
       const reach = Math.min(13, Math.max(3, po - Math.min(...e.lanes) + 1.2));
       const [ax, az] = at(e, s, po - reach / 2);
@@ -163,8 +165,8 @@ function buildTrafficControls(group, network) {
       dummy.rotation.set(0, faceYaw(e), 0);
       dummy.position.set(px, g + 1.15, pz);
       dummy.scale.set(0.05, 2.3, 0.05);
+      obstacles.push(standing = { x: px, z: pz, r: 0.1, kind: 'sign', height: 2.3, parts: [] });
       put('post');
-      obstacles.push({ x: px, z: pz, r: 0.1 });
       dummy.position.set(px, g + 2.1, pz);
       dummy.scale.set(0.76, 0.76, 1);
       const yieldSign = e.control === 'yield';
@@ -216,14 +218,22 @@ function buildTrafficControls(group, network) {
     plaque: [plane, face(plaqueFace), false],
     plaqueBack: [back, backOf(plaqueShape), false]
   };
+  const meshOf = new Map();
   for (const [name, matrices] of lists) {
     const [geo, mat, shadow] = kinds[name];
     const inst = new THREE.InstancedMesh(geo, mat, matrices.length);
+    meshOf.set(name, inst);
     matrices.forEach((m, i) => inst.setMatrixAt(i, m));
     inst.instanceMatrix.needsUpdate = true;
     inst.castShadow = shadow;
     inst.name = 'TrafficControls_' + name;
     group.add(inst);
+  }
+  // each pole's and post's pieces as [mesh, instance, ...] (knockdowns.js)
+  for (const o of obstacles) {
+    const parts = [];
+    for (let k = 0; k < o.parts.length; k += 2) parts.push(meshOf.get(o.parts[k]), o.parts[k + 1]);
+    o.parts = parts;
   }
   group.userData.terrain = 'set'; // each was stood on the ground as it was placed
   console.info(`[traffic controls] ${lights} signal heads, ${signs} stop & yield signs`);

@@ -118,6 +118,9 @@ function chunkInstancedMesh(mesh, cell) {
     copyObjectState(chunk, mesh);
     chunk.computeBoundingSphere();
     chunks.push(chunk);
+    // where each instance went, so one can still be moved (a pole knocked over, knockdowns.js)
+    const movedTo = mesh.userData.movedTo || (mesh.userData.movedTo = new Array(n));
+    ids.forEach((id, j) => { movedTo[id] = [chunk, j]; });
   }
   return chunks;
 }
@@ -268,11 +271,13 @@ function setupSceneCulling(scene, roots, shadow = null) {
           instancedBySig.set(sig, entry);
         }
         const e = o.instanceMatrix.array;
+        const shadowCopy = (o.userData.shadowCopy = new Array(o.count));
         for (let i = 0; i < o.count; i++) {
           _wm.multiplyMatrices(o.matrixWorld, _m.fromArray(e, i * 16));
           const key = cellKey(_wm.elements[12], _wm.elements[14]);
           let list = entry.cells.get(key);
           if (!list) entry.cells.set(key, (list = []));
+          shadowCopy[i] = [list, list.length / 16]; // its stand-in, once made (list.mesh)
           list.push(..._wm.elements);
         }
       } else {
@@ -317,6 +322,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
         const mesh = new THREE.InstancedMesh(entry.geometry, entry.material, n);
         mesh.instanceMatrix.array.set(list);
         mesh.computeBoundingSphere();
+        list.mesh = mesh;
         addProxy(mesh);
       }
     }

@@ -385,6 +385,59 @@ BODY_SPECS.minivan = {
   rearWiper: true
 };
 
+// A low two-door sports coupe (~Mustang / Camaro / 911 proportions): long hood, cabin set well back under a fast
+// windshield and a short fastback roof, wide flared rear haunches, slim lamps and little ground clearance
+BODY_SPECS.sports = {
+  name: 'sports',
+  zFront: 2.2,
+  zRear: -2.25,
+  wheelRadius: 0.345,
+  wheelZ: 1.36,
+  wheelX: 0.84,
+  archGap: 0.03,
+  archFlare: 0.05,
+  tuck: 0.06,
+  halfWidth: [[2.2, 0.9], [1.36, 0.95], [0, 0.94], [-1.36, 0.968], [-2.25, 0.91]],
+  sill: [[2.2, 0.2], [1.2, 0.19], [-1.2, 0.19], [-2.25, 0.23]],
+  shoulder: [[2.2, 0.56], [1.7, 0.63], [1.36, 0.65], [0, 0.66], [-1.36, 0.7], [-2.25, 0.69]],
+  edge: [[2.06, 0.66], [1.5, 0.72], [0.8, 0.77], [0.2, 0.8], [-0.6, 0.83], [-1.3, 0.86], [-1.8, 0.86], [-2.1, 0.83]],
+  crown: [[2.06, 0.03], [0.6, 0.03], [0.35, 0.004], [-1.5, 0.004], [-1.8, 0.012], [-2.25, 0.01]],
+  tumble: [[2.2, 0.13], [0.9, 0.11], [-1.6, 0.11], [-2.25, 0.12]],
+  nose: { halfWidth: [0.3, 0.66, 2.6], edge: [0.14, 0.6, 2.6], crown: [0.14, 0.01, 2], sill: [0.16, 0.24, 2], shoulder: [0.22, 0.52, 2.6] },
+  tail: { halfWidth: [0.3, 0.74, 2.8], edge: [0.1, 0.8, 3], crown: [0.1, 0.006, 2], sill: [0.16, 0.3, 2], shoulder: [0.22, 0.64, 2.6] },
+  noseRake: { length: 0.5, y: [[0.2, 0.045], [0.29, 0], [0.42, 0], [0.52, 0.03], [0.6, 0.1], [0.66, 0.14]], plan: 0.09 },
+  tailRake: { length: 0.4, y: [[0.23, 0.075], [0.36, 0], [0.48, 0], [0.55, 0.012], [0.68, 0.015], [0.8, 0.03]], plan: 0.07 },
+  cabin: {
+    cowl: 0.45,
+    roofFront: -0.45,
+    roofRear: -1.2,
+    deck: -1.75,
+    roofY: [[-0.45, 1.2], [-0.8, 1.225], [-1.2, 1.19]],
+    rail: [0.6, 0.56],
+    inset: 0.03,
+    bulge: 0.016,
+    roofEdge: 0.045,
+    roofCrown: 0.03,
+    roofRound: 4,
+    pillars: [],
+    glassEnd: -1.5
+  },
+  doors: [0.6, -0.85], // one long door a side
+  handles: [-0.7],
+  headlight: [0.62, 0.56, 0.24, 0.035],
+  taillight: [0.6, 0.72, 0.28, 0.04],
+  grille: [0.5, 0.3, 0.03],
+  intake: [0.32, 0.62, 0.07],
+  plates: [0.38, 0.55],
+  bumperLine: [0.6, 0.5],
+  bumpers: [[0.36, 0.03], [0.4, 0.03]],
+  chrome: false,
+  cladding: 0,
+  sign: false,
+  rails: false,
+  rearWiper: false
+};
+
 for (const spec of Object.values(BODY_SPECS)) {
   // Kept for code that places lamp flares: lamp heights (front, rear) and centres across the car
   spec.lamps = [spec.headlight[1], spec.taillight[1]];
@@ -1236,7 +1289,9 @@ const ANN_ARBOR_PAINT = {
   pickup: [[0xf0f1f2, 0], [0x9ba2a9, 1], [0x1a1d21, 1], [0x2b3a4f, 1], [0x6a1d20, 0], [0x00274c, 0], [0x4e555c, 1],
     [0x34433a, 1]],
   van: [[0xf3f4f5, 0], [0xf3f4f5, 0], [0x00274c, 0], [0xbcc2c8, 1], [0xf0f1f2, 0], [0x00274c, 0], [0x8e959c, 0]],
-  taxi: [[0xc8ced5, 1]]
+  taxi: [[0xc8ced5, 1]],
+  // the odd sports car: red, Michigan blue, black, silver, white, deep green
+  sports: [[0xb3141c, 1], [0x00274c, 1], [0x121417, 1], [0xc3c8cd, 1], [0xf2f3f4, 0], [0x1f4a34, 1], [0xc2401a, 1]]
 };
 // One of them for car number i (or a hash 0..1 times 1000), with its own trim, wheels and plate
 function annArborCar(kind, i) {
@@ -1426,7 +1481,7 @@ function carPlateTexture() {
  * Every mask is built once and shared by the colour, roughness, metalness & emissive graphs (TSL turns nodes used
  * more than once into temporaries), so the fragment shader evaluates each SDF a single time.
  */
-function createLoftedCarMaterial(spec, fixedColorHex = null) {
+function createLoftedCarMaterial(spec, fixedColorHex = null, { parked = false } = {}) {
   const cacheKey = `${spec.name}_${fixedColorHex ?? 'instanced'}`;
   if (_carMaterialCache.has(cacheKey)) {
     return _carMaterialCache.get(cacheKey);
@@ -1969,7 +2024,8 @@ function createLoftedCarMaterial(spec, fixedColorHex = null) {
   mat.colorNode = colorFn();
   mat.roughnessNode = roughFn();
   mat.metalnessNode = metalFn();
-  mat.emissiveNode = emissiveFn();
+  // a parked car's lamps are off: glass, never lit
+  if (!parked) mat.emissiveNode = emissiveFn();
 
   _carMaterialCache.set(cacheKey, mat);
   return mat;

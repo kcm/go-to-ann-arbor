@@ -15,7 +15,7 @@ const STALL_W = 2.7, MODULE = 18;
 const NEAR = 70, FAR = 650;
 const LAWN_Y = 0.239;
 
-const KINDS = ['sedan', 'sedan', 'suv', 'sedan', 'suv', 'minivan', 'suv', 'pickup', 'sedan', 'suv', 'van', 'sedan', 'suv', 'pickup'];
+const KINDS = ['sedan', 'sedan', 'suv', 'sedan', 'suv', 'minivan', 'suv', 'pickup', 'sedan', 'suv', 'van', 'sedan', 'suv', 'pickup', 'sports'];
 const hash = (x, z, k = 0) => { const v = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };
 
 function inside(ring, x, z) {
@@ -147,7 +147,7 @@ function buildParkedCars(group) {
   const SPARE = 12;
   const setFor = (kind, cars = []) => {
     const spec = BODY_SPECS[kind];
-    const mat = createLoftedCarMaterial(spec);
+    const mat = createLoftedCarMaterial(spec, null, { parked: true }); // engine off, lamps dark
     const capacity = cars.length + SPARE;
     const make = (geo) => {
       geo.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));

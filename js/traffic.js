@@ -57,7 +57,8 @@ const CAR_KINDS = {
   suv: { half: 2.3, halfWidth: 0.92, axle: 1.4, halfL: 2.22, mass: 2100, engine: 'suv' },
   minivan: { half: 2.6, halfWidth: 0.92, axle: 1.52, halfL: 2.52, mass: 2000, engine: 'sedan' },
   pickup: { half: 2.86, halfWidth: 0.96, axle: 1.92, halfL: 2.78, mass: 2400, engine: 'suv' },
-  van: { half: 2.96, halfWidth: 0.95, axle: 1.8, halfL: 2.88, mass: 2700, engine: 'suv' }
+  van: { half: 2.96, halfWidth: 0.95, axle: 1.8, halfL: 2.88, mass: 2700, engine: 'suv' },
+  sports: { half: 2.25, halfWidth: 0.9, axle: 1.36, halfL: 2.18, mass: 1450, engine: 'sedan' }
 };
 
 // Retire distant actors even when looking their way: keeping them indefinitely starves upcoming streets.
@@ -188,7 +189,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   // Ann Arbor's police cruisers: white, the blue stripe and lettering on the doors
   const policeWhite = new THREE.Color(0xf6f9fc);
   // Of every 20 cars: 8 sedans (Priuses, Civics, Camrys, the odd Tesla or old Volvo), 6 SUVs and crossovers
-  // (Subarus, RAV4s, CR-Vs), 2 minivans, 3 pickups (Fords and Chevys) and a van; no cabs. Colours in annArborCar().
+  // (Subarus, RAV4s, CR-Vs), 2 minivans, 3 pickups (Fords and Chevys) and a van; no cabs. Every 40th sedan slot is a sports car. Colours in annArborCar().
   const FLEET_MIX = ['sedan', 'sedan', 'van', 'sedan', 'suv', 'sedan', 'suv', 'minivan', 'suv', 'pickup',
     'sedan', 'pickup', 'suv', 'pickup', 'suv', 'sedan', 'minivan', 'sedan', 'suv', 'sedan'];
 
@@ -199,6 +200,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   for (let i = 0; i < NUM_CARS; i++) {
     const isPolice = (i % 50) === 6 || (i % 100) === 56;
     let bodyType = FLEET_MIX[i % FLEET_MIX.length];
+    if (bodyType === 'sedan' && i % 40 === 17) bodyType = 'sports';
     if (isPolice) bodyType = (i % 100) === 56 ? 'suv' : 'sedan';
 
     let col;
@@ -2170,7 +2172,7 @@ function createHighwayTraffic(scene, lanes) {
     for (let u = rand() * 30; u < lane.len - 12; u += 24 + rand() * 50) {
       const h = rand();
       // Fewer vans than in town: commercial vehicles are barred from the parkways
-      const kind = h < 0.4 ? 'sedan' : h < 0.75 ? 'suv' : h < 0.84 ? 'minivan' : h < 0.96 ? 'pickup' : 'van';
+      const kind = h < 0.025 ? 'sports' : h < 0.4 ? 'sedan' : h < 0.75 ? 'suv' : h < 0.84 ? 'minivan' : h < 0.96 ? 'pickup' : 'van';
       const entry = annArborCar(kind, Math.floor(rand() * 1000));
       const col = new THREE.Color(entry.hex);
       const spec = BODY_SPECS[kind];
