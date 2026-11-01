@@ -63,6 +63,8 @@ function copyObjectState(dst, src) {
   dst.layers.mask = src.layers.mask;
   dst.visible = src.visible;
   dst.userData = { ...src.userData };
+  delete dst.userData.movedTo; // the source's own notes of where its instances went
+  delete dst.userData.shadowCopy;
   dst.position.copy(src.position);
   dst.quaternion.copy(src.quaternion);
   dst.scale.copy(src.scale);

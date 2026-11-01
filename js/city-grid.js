@@ -70,6 +70,7 @@ import { riverDepth } from './terrain.js';
 let bigParkClearings;
 let parkTreeSites;
 let parkLampSites;
+let parkLampMeshes = null; // [pole, globe, pool], each lamp's instance at its index in parkLampSites
 let pavedPlazaRects;
 let sidewalkBlocks;
 let fdrViaduct;
@@ -1521,7 +1522,7 @@ function buildCityGrid(scene) {
   // Unified Roadway Asphalt Deck (Y = 0.0) filling the town's edge
   const roadMat = createRoadSurfaceMaterial();
   const roadMesh = createFlatPolygonMesh(TOWN_EDGE, 0.0, roadMat, true);
-  roadMesh.userData.terrainTolerance = 0.03; // Lamp: close enough to the ground that the road markings stay on it
+  roadMesh.userData.terrainTolerance = 0.05; // Lamp: as the other ground layers; the road markings sit 6 cm over it (road-paint.js)
   group.add(roadMesh);
 
   // =========================================================================
@@ -1899,7 +1900,8 @@ function buildCityGrid(scene) {
     poolInst.instanceMatrix.needsUpdate = true;
     poolInst.computeBoundingSphere();
     group.add(poolInst);
-  }
+    parkLampMeshes = [poleInst, globeInst, poolInst];
+  } else parkLampMeshes = null;
 
   // Park & plaza tree and lamp sites, read by street-details.js after the city grid is built
   parkTreeSites = treeSites;
@@ -2916,6 +2918,7 @@ export {
   bigParkClearings,
   parkTreeSites,
   parkLampSites,
+  parkLampMeshes,
   pavedPlazaRects,
   sidewalkBlocks,
   fdrViaduct

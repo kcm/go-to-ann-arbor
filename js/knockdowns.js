@@ -1,5 +1,4 @@
 import * as THREE from 'three/webgpu';
-import { log } from '../lamp-game.js';
 
 // Trees, lamp posts, signal poles and sign posts a car can knock over (main.js gives each its collider). Whether a hit
 // fells one depends on how fast the car comes at it head on, how heavy the car is, and how stout it is: a sign post
@@ -80,15 +79,6 @@ function createKnockdowns({ onFall = null, onLand = null } = {}) {
     }
     falling.push(item);
     item.out?.(); // a streetlight goes dark
-    if (item.parts) {
-      const at = [];
-      for (let k = 0; k < item.parts.length; k += 2) {
-        let mesh = item.parts[k], i = item.parts[k + 1];
-        while (mesh.userData.movedTo?.[i]) [mesh, i] = mesh.userData.movedTo[i];
-        at.push(`${mesh.name || '?'}:${i}/${mesh.count}${mesh.parent ? '' : ' (not drawn)'}${mesh.instanceMatrix.isStorageInstancedBufferAttribute ? ' storage' : ''}`);
-      }
-      log('[knock-debug] parts ' + at.join(', '));
-    }
     onFall?.(item, speed);
     // a sign post barely slows the car; a tree it only just fells, nearly stops it
     result.keep = Math.max(0.15, 1 - 0.85 * (give / speed) ** 2);

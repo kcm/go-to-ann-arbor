@@ -147,6 +147,11 @@ async function initApp() {
   function cityPart(build, { cull = null } = {}) {
     const group = new THREE.Group();
     const made = build(group);
+    // A part that waits for its ground layers (terrain.js) is put together once they're in
+    if (made instanceof Promise) return made.then((m) => finishPart(group, m, cull));
+    return finishPart(group, made, cull);
+  }
+  function finishPart(group, made, cull) {
     // Island-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
     // (scene-culling.js)
     const culled = cull ? cull(group, [group], true) : [];
@@ -159,10 +164,11 @@ async function initApp() {
     };
   }
   await showLoadingStage('Building streets, parks and the Huron River...');
-  const grid = live.keep('grid', () => cityPart((g) => {
+  const grid = await live.keep('grid', () => cityPart(async (g) => {
     const made = buildCityGrid(g);
-    // Lamp: the street level built flat at y = 0, set on the ground
-    setOnTerrain(g.getObjectByName('CityGrid'));
+    // Lamp: the street level built flat at y = 0, set on the ground (cut on several cores the first time, then read
+    // back from what that start saved: terrain.js)
+    await setOnTerrain(g.getObjectByName('CityGrid'));
     return made;
   }, { cull: setupSceneCulling }), { inputs: [heights] });
   const cityGrid = grid.made;
@@ -200,9 +206,9 @@ async function initApp() {
   // the city's hydrants and park benches, tables, shelters and courts (build-street-furniture.py)
   const furnitureBytes = await asset('data/street-furniture.json');
   const streetFurniture = furnitureBytes ? JSON.parse(new TextDecoder().decode(furnitureBytes)) : null;
-  const details = live.keep('streetDetails', () => cityPart((g) => {
+  const details = await live.keep('streetDetails', () => cityPart(async (g) => {
     const made = buildStreetDetails(g, allColliders, streetFurniture);
-    setOnTerrain(g.getObjectByName('StreetDetails'));
+    await setOnTerrain(g.getObjectByName('StreetDetails'));
     return made;
   }, { cull: setupSceneCulling }), { inputs: [heights, grid, outskirtsPart, landmarks, blocks], from: ['data/street-furniture.json'] });
   const streetDetails = details.made;
@@ -1124,7 +1130,7 @@ async function initApp() {
       if (loadingStatus) loadingStatus.textContent = 'Waiting for graphics to finish the first frame...';
       Promise.resolve(device && device.queue.onSubmittedWorkDone()).catch(() => {}).then(() => {
         markInit('gpu');
-        console.log(`[init] ${initTimings.join(', ')}`);
+        log(`[init] ${initTimings.join(', ')}`);
         initTimings = null;
         // Lamp's preview draws no frames on a screen, so a fade would never finish there: it goes at once.
         if (loadingOverlay && window.lampPreview) loadingOverlay.style.transition = 'none';

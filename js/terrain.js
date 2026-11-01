@@ -10,9 +10,10 @@
 
 import * as THREE from 'three/webgpu';
 import { float, texture, uniform, vec2 } from 'three/tsl';
-import { hot, asset } from '../lamp-game.js';
+import { hot, asset, log, work } from '../lamp-game.js';
 import { STADIUM, radiiAt, bowlSurface } from './stadium-shape.js';
 import { GEO } from './city-geodata.js';
+import { baseHeight, digAt, levelAt, onDeck, BUCKET, bucketKey, drapeLayer, CORE_SOURCE } from './ground-core.js';
 
 let grid = null; // { x0, z0, step, cols, rows, heights: Float32Array }
 
@@ -80,33 +81,6 @@ async function readRiver(g, url) {
     return null;
   }
 }
-
-function baseHeight(g, x, z) {
-  const fx = (x - g.x0) / g.step, fz = (z - g.z0) / g.step;
-  if (!(fx >= 0 && fz >= 0 && fx < g.cols - 1 && fz < g.rows - 1)) return 0;
-  const c = Math.floor(fx), r = Math.floor(fz), ax = fx - c, az = fz - r;
-  const h = g.heights, i = r * g.cols + c;
-  return (h[i] * (1 - ax) + h[i + 1] * ax) * (1 - az) + (h[i + g.cols] * (1 - ax) + h[i + g.cols + 1] * ax) * az;
-}
-
-// How far (0-1) the ground at (x, z) is dug down to the river's bed
-function digAt(r, x, z) {
-  const fx = (x - r.dx0) / r.dstep, fz = (z - r.dz0) / r.dstep;
-  if (!(fx >= 0 && fz >= 0 && fx < r.dcols - 1 && fz < r.drows - 1)) return 0;
-  const c = Math.floor(fx), w = Math.floor(fz), ax = fx - c, az = fz - w, d = r.dig, i = w * r.dcols + c;
-  if (!(d[i] | d[i + 1] | d[i + r.dcols] | d[i + r.dcols + 1])) return 0;
-  return ((d[i] * (1 - ax) + d[i + 1] * ax) * (1 - az) + (d[i + r.dcols] * (1 - ax) + d[i + r.dcols + 1] * ax) * az) / 255;
-}
-
-function levelAt(r, x, z) {
-  const fx = Math.min(Math.max((x - r.lx0) / r.lstep, 0), r.lcols - 1.001);
-  const fz = Math.min(Math.max((z - r.lz0) / r.lstep, 0), r.lrows - 1.001);
-  const c = Math.floor(fx), w = Math.floor(fz), ax = fx - c, az = fz - w, h = r.level, i = w * r.lcols + c;
-  return (h[i] * (1 - ax) + h[i + 1] * ax) * (1 - az) + (h[i + r.lcols] * (1 - ax) + h[i + r.lcols + 1] * ax) * az;
-}
-
-const BUCKET = 32;
-const bucketKey = (bx, bz) => bx * 100003 + bz;
 
 // Each bridge's deck: from the ground at one end to the ground at the other, raised where it's over the water to clear
 // it (2.4 m under a street's or a railway's, 1.3 m under a footbridge's), sampled every 4 m along it. Ways the map splits
@@ -177,23 +151,6 @@ function buildDecks(g, r) {
       }
     }
   }
-}
-
-// The ground at (x, z) on a street's or railway's bridge deck, eased in from the ground over its first and last 8 m
-function onDeck(r, x, z, h) {
-  const list = r.buckets.get(bucketKey(Math.floor(x / BUCKET), Math.floor(z / BUCKET)));
-  if (!list) return h;
-  for (const { deck, a, b } of list) {
-    const ex = b[0] - a[0], ez = b[1] - a[1], l2 = ex * ex + ez * ez;
-    const t = ((x - a[0]) * ex + (z - a[1]) * ez) / l2;
-    if (t < -0.2 || t > 1.2) continue;
-    const u = Math.min(1, Math.max(0, t));
-    if (Math.hypot(x - a[0] - ex * u, z - a[1] - ez * u) > deck.half) continue;
-    const s = a[2] + (b[2] - a[2]) * u, top = a[3] + (b[3] - a[3]) * u;
-    const w = Math.min(1, Math.min(s, deck.length - s) / 8);
-    return h + (top - h) * w;
-  }
-  return h;
 }
 
 // The river's water level at (x, z), or null where there's no river
@@ -574,93 +531,25 @@ function liftInstances(mesh) {
   mesh.computeBoundingSphere?.();
 }
 
-// Big flat instances (a block's sidewalk slab) made into one geometry that follows the ground.
-function drapeInstances(mesh, tolerance) {
-  mesh.updateMatrixWorld();
-  const m = new THREE.Matrix4();
-  const parts = [];
-  const base = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
-  for (let i = 0; i < mesh.count; i++) {
-    mesh.getMatrixAt(i, m);
-    const g = new THREE.BufferGeometry();
-    for (const name of ['position', 'normal', 'uv']) if (base.attributes[name]) g.setAttribute(name, base.attributes[name].clone());
-    g.applyMatrix4(m.premultiply(mesh.matrixWorld));
-    parts.push(drapeGeometry(g, tolerance));
-  }
-  const merged = new THREE.Mesh(mergeAll(parts), mesh.material);
-  merged.castShadow = mesh.castShadow;
-  merged.receiveShadow = mesh.receiveShadow;
-  merged.renderOrder = mesh.renderOrder;
-  merged.name = mesh.name;
-  const group = new THREE.Group();
-  group.name = mesh.name;
-  for (const g of splitIntoTiles(merged.geometry)) {
-    const tile = merged.clone();
-    tile.geometry = g;
-    group.add(tile);
-  }
-  return group;
-}
-
-function mergeAll(geometries) {
-  let total = 0;
-  for (const g of geometries) total += g.attributes.position.count;
-  const merged = new THREE.BufferGeometry();
-  for (const name of Object.keys(geometries[0].attributes)) {
-    const size = geometries[0].attributes[name].itemSize;
-    const data = new Float32Array(total * size);
-    let at = 0;
-    for (const g of geometries) { data.set(g.attributes[name].array, at); at += g.attributes[name].array.length; }
-    merged.setAttribute(name, new THREE.BufferAttribute(data, size));
-  }
-  merged.computeBoundingBox();
-  merged.computeBoundingSphere();
-  return merged;
-}
-
 // A world-space geometry split into square tiles by where each triangle's middle falls, so a ground layer that spans
 // the island is drawn (and shadowed) only where the camera sees it, rather than whole on every pass.
 const TILE = 800; // larger tiles: each ground layer is a few dozen pieces, not hundreds
 function splitIntoTiles(geometry) {
-  const pos = geometry.attributes.position.array;
-  const triangles = pos.length / 9;
-  const tileOf = new Int32Array(triangles);
-  const counts = new Map();
-  for (let t = 0; t < triangles; t++) {
-    const o = t * 9;
-    const key = Math.floor((pos[o] + pos[o + 3] + pos[o + 6]) / 3 / TILE) * 100000
-      + Math.floor((pos[o + 2] + pos[o + 5] + pos[o + 8]) / 3 / TILE);
-    tileOf[t] = key;
-    counts.set(key, (counts.get(key) || 0) + 1);
-  }
-  if (counts.size < 2) return [geometry];
   const names = Object.keys(geometry.attributes);
-  const tiles = new Map();
-  for (const [key, count] of counts) {
-    tiles.set(key, { used: 0, arrays: names.map((n) => new geometry.attributes[n].array.constructor(count * 3 * geometry.attributes[n].itemSize)) });
-  }
-  for (let t = 0; t < triangles; t++) {
-    const tile = tiles.get(tileOf[t]);
-    names.forEach((n, k) => {
-      const a = geometry.attributes[n], size = a.itemSize * 3;
-      tile.arrays[k].set(a.array.subarray(t * size, t * size + size), tile.used * size);
-    });
-    tile.used++;
-  }
-  return [...tiles.values()].map(({ arrays }) => {
-    const g = new THREE.BufferGeometry();
-    names.forEach((n, k) => g.setAttribute(n, new THREE.BufferAttribute(arrays[k], geometry.attributes[n].itemSize, geometry.attributes[n].normalized)));
-    g.computeBoundingBox();
-    g.computeBoundingSphere();
-    return g;
-  });
+  const layer = { count: geometry.attributes.position.count, attrs: names.map((n) => {
+    const a = geometry.attributes[n];
+    return { name: n, array: a.array, itemSize: a.itemSize, normalized: a.normalized };
+  }) };
+  const tiles = tilesOfLayer(layer);
+  if (tiles.length < 2) return [geometry];
+  return tiles.map(geometryOfLayer);
 }
 
-// A mesh in world space, its geometry laid on the ground, as one mesh or (when it's big) a group of tiles
-function drapedMesh(mesh, tolerance) {
-  // Road markings carry each vertex's offset to its strip's edge (`side`), which a cut would average away: they're
-  // built in short lengths instead and only laid on the ground
-  const draped = drapeGeometry(mesh.geometry, mesh.geometry.attributes.side ? 0 : tolerance);
+// A mesh in world space laid on the ground (`draped`, its geometry cut and raised), as one mesh or (when it's big) a
+// group of tiles to put in its place
+function meshOnGround(mesh, draped) {
+  draped.computeBoundingBox();
+  draped.computeBoundingSphere();
   const big = draped.attributes.position.count > 30000 && !draped.index;
   if (!big) {
     mesh.geometry = draped;
@@ -675,36 +564,319 @@ function drapedMesh(mesh, tolerance) {
     tile.renderOrder = mesh.renderOrder;
     tile.frustumCulled = mesh.frustumCulled;
     tile.layers.mask = mesh.layers.mask;
+    tile.name = mesh.name;
     group.add(tile);
   }
   return group;
+}
+
+// ---- Ground layers as plain data, cut on other cores and saved for the next start ----------------------------------
+
+// What a layer is made from, as the arrays its key is the fingerprint of: a geometry's attributes and index, and an
+// instanced mesh's matrices as well, so a saved layer is found without making the layer first
+function geometryInputs(geometry) {
+  const names = Object.keys(geometry.attributes).filter((n) => !geometry.attributes[n].isInterleavedBufferAttribute).sort();
+  return [textBytes(names.join(',')), ...names.map((n) => geometry.attributes[n].array), ...(geometry.index ? [geometry.index.array] : [])];
+}
+function instanceInputs(mesh) {
+  mesh.updateMatrixWorld();
+  return [...geometryInputs(mesh.geometry), mesh.instanceMatrix.array.subarray(0, mesh.count * 16), new Float32Array(mesh.matrixWorld.elements)];
+}
+
+// A mesh's geometry as a layer (ground-core.js): its triangles, every attribute but interleaved ones, in copies of its
+// own arrays (they go to a worker)
+function layerOfGeometry(geometry) {
+  const g = geometry.index ? geometry.toNonIndexed() : geometry;
+  const attrs = Object.keys(g.attributes).filter((n) => !g.attributes[n].isInterleavedBufferAttribute).map((n) => {
+    const a = g.attributes[n];
+    return { name: n, array: a.array.slice(0, a.count * a.itemSize), itemSize: a.itemSize, normalized: a.normalized };
+  });
+  return { count: g.attributes.position.count, attrs };
+}
+
+// Big flat instances (a block's sidewalk slab) as one layer in world space: position, normal and uv of every instance
+function layerOfInstances(mesh) {
+  mesh.updateMatrixWorld();
+  const base = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry;
+  const names = ['position', 'normal', 'uv'].filter((n) => base.attributes[n]);
+  const n = base.attributes.position.count, count = n * mesh.count;
+  const arrays = names.map((name) => new Float32Array(count * base.attributes[name].itemSize));
+  const m = new THREE.Matrix4(), normalMatrix = new THREE.Matrix3(), v = new THREE.Vector3();
+  for (let i = 0; i < mesh.count; i++) {
+    mesh.getMatrixAt(i, m);
+    m.premultiply(mesh.matrixWorld);
+    normalMatrix.getNormalMatrix(m);
+    names.forEach((name, k) => {
+      const src = base.attributes[name], out = arrays[k], o = i * n * src.itemSize;
+      for (let j = 0; j < n; j++) {
+        if (name === 'uv') { out[o + j * 2] = src.getX(j); out[o + j * 2 + 1] = src.getY(j); continue; }
+        v.fromBufferAttribute(src, j);
+        if (name === 'position') v.applyMatrix4(m); else v.applyMatrix3(normalMatrix).normalize();
+        out[o + j * 3] = v.x; out[o + j * 3 + 1] = v.y; out[o + j * 3 + 2] = v.z;
+      }
+    });
+  }
+  return { count, attrs: names.map((name, k) => ({ name, array: arrays[k], itemSize: base.attributes[name].itemSize, normalized: false })) };
+}
+
+function geometryOfLayer(layer) {
+  const g = new THREE.BufferGeometry();
+  for (const a of layer.attrs) g.setAttribute(a.name, new THREE.BufferAttribute(a.array, a.itemSize, a.normalized));
+  g.computeBoundingBox();
+  g.computeBoundingSphere();
+  return g;
+}
+
+// Triangles longer than this are halved (at their longest edge's middle, as the cut itself does) before the layer is
+// shared out, so one polygon over the whole town (the road surface) is cut on every core rather than one
+const SHARE_EDGE = 200;
+function splitLong(layer) {
+  const { attrs, count } = layer;
+  const pos = attrs.find((a) => a.name === 'position').array, max2 = SHARE_EDGE * SHARE_EDGE;
+  const long = (i) => (pos[i * 3] - pos[i * 3 + 3]) ** 2 + (pos[i * 3 + 2] - pos[i * 3 + 5]) ** 2 > max2
+    || (pos[i * 3 + 3] - pos[i * 3 + 6]) ** 2 + (pos[i * 3 + 5] - pos[i * 3 + 8]) ** 2 > max2
+    || (pos[i * 3 + 6] - pos[i * 3]) ** 2 + (pos[i * 3 + 8] - pos[i * 3 + 2]) ** 2 > max2;
+  let any = false;
+  for (let i = 0; i < count && !any; i += 3) any = long(i);
+  if (!any) return layer;
+  // Each long triangle as a list of smaller ones, in vertices of every attribute side by side (`stride` numbers)
+  const sizes = attrs.map((a) => a.itemSize), stride = sizes.reduce((n, k) => n + k, 0);
+  const P = sizes.slice(0, attrs.findIndex((a) => a.name === 'position')).reduce((n, k) => n + k, 0);
+  const extra = [];
+  const vertex = (i) => { const v = []; attrs.forEach((a, n) => { for (let k = 0; k < sizes[n]; k++) v.push(a.array[i * sizes[n] + k]); }); return v; };
+  const d2 = (p, q) => (p[P] - q[P]) ** 2 + (p[P + 2] - q[P + 2]) ** 2;
+  const mid = (p, q) => p.map((x, k) => (x + q[k]) / 2);
+  const split = (a, b, c, into) => {
+    const ab = d2(a, b), bc = d2(b, c), ca = d2(c, a), longest = Math.max(ab, bc, ca);
+    if (longest <= max2) { into.push(a, b, c); return; }
+    if (longest === ab) { const m = mid(a, b); split(a, m, c, into); split(m, b, c, into); }
+    else if (longest === bc) { const m = mid(b, c); split(a, b, m, into); split(a, m, c, into); }
+    else { const m = mid(c, a); split(a, b, m, into); split(m, b, c, into); }
+  };
+  let total = 0;
+  const plan = [];
+  for (let i = 0; i < count; i += 3) {
+    if (!long(i)) { plan.push(i); total += 3; continue; }
+    const into = [];
+    split(vertex(i), vertex(i + 1), vertex(i + 2), into);
+    plan.push(into); total += into.length;
+  }
+  const out = attrs.map((a) => new a.array.constructor(total * a.itemSize));
+  let at = 0;
+  for (const item of plan) {
+    if (typeof item === 'number') {
+      attrs.forEach((a, n) => out[n].set(a.array.subarray(item * sizes[n], (item + 3) * sizes[n]), at * sizes[n]));
+      at += 3;
+    } else {
+      for (const v of item) {
+        let o = 0;
+        attrs.forEach((a, n) => { for (let k = 0; k < sizes[n]; k++) out[n][at * sizes[n] + k] = v[o++]; });
+        at++;
+      }
+    }
+  }
+  return { count: total, attrs: attrs.map((a, n) => ({ ...a, array: out[n] })) };
+}
+
+// A layer in square tiles by where each triangle's middle falls (as splitIntoTiles), as layers
+function tilesOfLayer(layer) {
+  const pos = layer.attrs.find((a) => a.name === 'position').array, triangles = layer.count / 3;
+  const tileOf = new Int32Array(triangles), counts = new Map();
+  for (let t = 0; t < triangles; t++) {
+    const o = t * 9;
+    const key = Math.floor((pos[o] + pos[o + 3] + pos[o + 6]) / 3 / TILE) * 100000
+      + Math.floor((pos[o + 2] + pos[o + 5] + pos[o + 8]) / 3 / TILE);
+    tileOf[t] = key;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  if (counts.size < 2) return [layer];
+  const tiles = new Map();
+  for (const [key, n] of counts) tiles.set(key, { count: n * 3, used: 0, attrs: layer.attrs.map((a) => ({ ...a, array: new a.array.constructor(n * 3 * a.itemSize) })) });
+  for (let t = 0; t < triangles; t++) {
+    const tile = tiles.get(tileOf[t]);
+    for (let n = 0; n < layer.attrs.length; n++) {
+      const src = layer.attrs[n].array, dst = tile.attrs[n].array, size = layer.attrs[n].itemSize * 3;
+      const from = t * size, to = tile.used * size;
+      for (let k = 0; k < size; k++) dst[to + k] = src[from + k];
+    }
+    tile.used++;
+  }
+  return [...tiles.values()].map(({ count, attrs }) => ({ count, attrs }));
+}
+
+// A quick fingerprint of numbers, for the saved layers' keys: two 32-bit lanes over the bytes, 4 at a time
+function fingerprint(arrays, seed = 0) {
+  let h1 = 0x9e3779b9 ^ seed, h2 = 0x85ebca6b ^ seed;
+  for (const a of arrays) {
+    const bytes = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2);
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      h1 = Math.imul(h1 ^ w, 0x01000193);
+      h2 = Math.imul(h2 + w, 0x5bd1e995) ^ (h2 >>> 15);
+    }
+    for (let i = words.length * 4; i < bytes.length; i++) h1 = Math.imul(h1 ^ bytes[i], 0x01000193);
+    h1 = Math.imul(h1 ^ a.length, 0x01000193);
+  }
+  return (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+}
+const textBytes = (text) => new TextEncoder().encode(text);
+
+// The heights' data a worker needs (ground-core.js) and its fingerprint, with the cutting's own code in it, so a change
+// to the ground or to how it's cut makes every saved layer again
+const groundData = new WeakMap();
+function groundOfGrid(g) {
+  if (!groundData.has(g)) {
+    const r = g.river;
+    const ground = { x0: g.x0, z0: g.z0, step: g.step, cols: g.cols, rows: g.rows, heights: g.heights, river: r && {
+      dx0: r.dx0, dz0: r.dz0, dstep: r.dstep, dcols: r.dcols, drows: r.drows, dig: r.dig.slice(),
+      lx0: r.lx0, lz0: r.lz0, lstep: r.lstep, lcols: r.lcols, lrows: r.lrows, level: r.level, buckets: r.buckets
+    } };
+    const decks = r ? JSON.stringify(r.bridges) : '';
+    const key = fingerprint([g.heights, ...(r ? [ground.river.dig, r.level] : []),
+      textBytes(`${g.x0} ${g.z0} ${g.step} ${g.cols} ${g.rows} ${r ? [r.dx0, r.dz0, r.dstep, r.dcols, r.lx0, r.lz0, r.lstep, r.lcols].join(' ') : ''}`),
+      textBytes(decks), textBytes(CORE_SOURCE)]);
+    groundData.set(g, { ground, key });
+  }
+  return groundData.get(g);
+}
+
+// The saved layers, in the page's own database (IndexedDB), one for each part of the city, so saving one part's layers
+// doesn't hold up reading the next part's: each layer by its key, and the keys the part used last, so the ones a change
+// left behind are let go. Without a database every start cuts them again.
+const opening = new Map();
+try { indexedDB.deleteDatabase('ground-layers'); } catch {} // the one database all parts shared at first
+function savedLayers(part) {
+  if (!opening.has(part)) opening.set(part, new Promise((done) => {
+    try {
+      const request = indexedDB.open(`ground-layers-${part}`, 1);
+      request.onupgradeneeded = () => { request.result.createObjectStore('layers'); request.result.createObjectStore('parts'); };
+      request.onsuccess = () => done(request.result);
+      request.onerror = request.onblocked = () => done(null);
+    } catch { done(null); }
+  }));
+  return opening.get(part);
+}
+const asked = (request) => new Promise((done) => { request.onsuccess = () => done(request.result); request.onerror = () => done(undefined); });
+async function readSaved(part, keys) {
+  const db = await savedLayers(part);
+  if (!db) return keys.map(() => undefined);
+  try {
+    const store = db.transaction('layers').objectStore('layers');
+    return await Promise.all(keys.map((k) => asked(store.get(k))));
+  } catch { return keys.map(() => undefined); }
+}
+async function writeSaved(part, keys, made) {
+  const db = await savedLayers(part);
+  if (!db) return;
+  try {
+    const t = db.transaction(['layers', 'parts'], 'readwrite');
+    const layers = t.objectStore('layers'), parts = t.objectStore('parts');
+    const before = (await asked(parts.get(part))) || [];
+    for (const [k, layer] of made) layers.put(layer, k);
+    for (const k of before) if (!keys.includes(k)) layers.delete(k);
+    parts.put(keys, part);
+  } catch (error) { log(`[drape] not saved: ${error?.message || error}`); }
+}
+
+// Cuts the layers (`jobs`: { layer, tolerance }) on several cores: each long triangle halved first (splitLong), then the
+// triangles shared out in many small pieces by how much ground they cover, round and round the workers, so the hills
+// fall to all of them. Answers each job's draped layer, in order.
+async function cutOnCores(ground, jobs) {
+  const cores = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1));
+  const pieces = [];
+  let total = 0;
+  const weights = jobs.map((job) => {
+    const pos = job.layer.attrs.find((a) => a.name === 'position').array, w = new Float32Array(job.layer.count / 3);
+    for (let t = 0; t < w.length; t++) {
+      const o = t * 9;
+      const area = Math.abs((pos[o + 3] - pos[o]) * (pos[o + 8] - pos[o + 2]) - (pos[o + 6] - pos[o]) * (pos[o + 5] - pos[o + 2])) / 2;
+      w[t] = 1 + area / 50;
+      total += w[t];
+    }
+    return w;
+  });
+  const share = total / (cores * 12);
+  jobs.forEach((job, j) => {
+    const w = weights[j];
+    let from = 0, sum = 0;
+    for (let t = 0; t < w.length; t++) {
+      sum += w[t];
+      if (sum >= share || t === w.length - 1) {
+        const a = from * 3, b = (t + 1) * 3;
+        pieces.push({ job: j, tolerance: job.tolerance, count: b - a,
+          attrs: job.layer.attrs.map((x) => ({ ...x, array: x.array.slice(a * x.itemSize, b * x.itemSize) })) });
+        from = t + 1; sum = 0;
+      }
+    }
+  });
+  const batches = Array.from({ length: Math.min(cores, pieces.length) }, () => []);
+  pieces.forEach((p, i) => batches[i % batches.length].push(p));
+  const answers = await Promise.all(batches.map((batch) => work('js/drape-worker.js', { ground, pieces: batch },
+    batch.flatMap((p) => p.attrs.map((a) => a.array.buffer)))));
+  // Each job's pieces, back in their order
+  const parts = jobs.map(() => []);
+  batches.forEach((batch, b) => batch.forEach((p, i) => parts[p.job].push([pieces.indexOf(p), answers[b].results[i]])));
+  return parts.map((list, j) => {
+    list.sort((x, y) => x[0] - y[0]);
+    const count = list.reduce((n, [, r]) => n + r.count, 0);
+    return { count, attrs: jobs[j].layer.attrs.map((a, k) => {
+      const array = new a.array.constructor(count * a.itemSize);
+      let at = 0;
+      for (const [, r] of list) { array.set(r.attrs[k].array, at); at += r.attrs[k].array.length; }
+      return { name: a.name, array, itemSize: a.itemSize, normalized: a.normalized };
+    }) };
+  });
+}
+
+// The layers draped, each as its tiles (tilesOfLayer; one for a small mesh): those saved by an earlier start with the
+// same ground, code and layer read back, the rest cut on several cores and saved
+async function drapeLayers(part, jobs) {
+  const { ground, key: groundKey } = groundOfGrid(grid);
+  for (const job of jobs) job.key = `${groundKey}.${job.instances ? 'i' : 'm'}${job.tolerance}.${fingerprint(job.inputs)}`;
+  const saved = await readSaved(part, jobs.map((j) => j.key));
+  const missing = jobs.filter((j, i) => !(j.tiles = saved[i]));
+  if (missing.length) {
+    for (const job of missing) job.layer = splitLong(job.make());
+    const cut = await cutOnCores(ground, missing);
+    missing.forEach((j, i) => {
+      j.tiles = j.instances || cut[i].count > 30000 ? tilesOfLayer(cut[i]) : [cut[i]];
+      j.layer = null;
+    });
+    writeSaved(part, jobs.map((j) => j.key), missing.map((j) => [j.key, j.tiles]));
+  }
+  return missing.length;
 }
 
 const IDENTITY = new THREE.Matrix4();
 const isIdentity = (m) => m.elements.every((v, i) => Math.abs(v - IDENTITY.elements[i]) < 1e-6);
 
 // Sets a part of the city built flat on the ground. What's drawn in world space (merged batches, a single polygon of
-// the whole island) follows the ground vertex by vertex, cut finer where it bends (tessellate); an object placed by
+// the whole island) follows the ground vertex by vertex, cut finer where it bends (ground-core.js); an object placed by
 // its own transform is lifted whole by the ground at its position; instances are lifted each by its own, and those
 // marked userData.terrain = 'drape' (big flat slabs) are made into one geometry that follows the ground. Anything
 // marked userData.terrain = 'set' was put on the ground where it was built and is left alone, children included.
+// The cutting is the slow part of a start: it's done on several cores and saved, so a later start with the same city
+// reads it back (drapeLayers). Answers a promise when there's cutting to wait for, else nothing.
 function setOnTerrain(root, tolerance = 0.05) {
-  if (!grid || !root) return;
+  if (!grid || !root) return null;
   root.updateMatrixWorld(true);
-  const replace = [];
+  const replace = [], jobs = [];
   const visit = (obj) => {
     if (obj.userData.terrain === 'set') return;
     if (obj.isInstancedMesh) {
-      if (obj.userData.terrain === 'drape') replace.push([obj, drapeInstances(obj, tolerance)]);
+      if (obj.userData.terrain === 'drape') jobs.push({ obj, instances: true, inputs: instanceInputs(obj), make: () => layerOfInstances(obj), tolerance });
       else liftInstances(obj);
     } else if ((obj.isMesh || obj.isLine || obj.isPoints) && obj.geometry?.attributes.position) {
       if (isIdentity(obj.matrixWorld)) {
-        if (obj.isMesh) {
-          const tiles = drapedMesh(obj, obj.userData.terrainTolerance ?? tolerance);
+        // Road markings carry each vertex's offset to its strip's edge (`side`), which a cut would average away:
+        // they're built in short lengths instead and only laid on the ground; lines and points can't be cut
+        const cut = obj.isMesh && !obj.geometry.attributes.side ? obj.userData.terrainTolerance ?? tolerance : 0;
+        if (cut) jobs.push({ obj, inputs: geometryInputs(obj.geometry), make: () => layerOfGeometry(obj.geometry), tolerance: cut });
+        else if (obj.isMesh) {
+          const tiles = meshOnGround(obj, drapeGeometry(obj.geometry, 0));
           if (tiles) replace.push([obj, tiles]);
-        } else {
-          obj.geometry = drapeGeometry(obj.geometry, 0);
-        }
+        } else obj.geometry = drapeGeometry(obj.geometry, 0);
       } else {
         const at = new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld);
         const lift = groundHeight(at.x, at.z);
@@ -719,10 +891,42 @@ function setOnTerrain(root, tolerance = 0.05) {
     for (const child of [...obj.children]) visit(child);
   };
   visit(root);
-  for (const [old, draped] of replace) {
-    old.parent.add(draped);
-    old.removeFromParent();
-  }
+  const finish = () => {
+    for (const job of jobs) {
+      const obj = job.obj, geometries = job.tiles.map(geometryOfLayer);
+      job.tiles = null;
+      if (!job.instances && geometries.length === 1) {
+        obj.geometry.dispose();
+        obj.geometry = geometries[0];
+        continue;
+      }
+      const group = new THREE.Group();
+      group.name = obj.name;
+      for (const g of geometries) {
+        const tile = new THREE.Mesh(g, obj.material);
+        tile.castShadow = obj.castShadow;
+        tile.receiveShadow = obj.receiveShadow;
+        tile.renderOrder = obj.renderOrder;
+        if (!job.instances) {
+          tile.frustumCulled = obj.frustumCulled;
+          tile.layers.mask = obj.layers.mask;
+        }
+        tile.name = obj.name;
+        group.add(tile);
+      }
+      replace.push([obj, group]);
+    }
+    for (const [old, draped] of replace) {
+      old.parent.add(draped);
+      old.removeFromParent();
+    }
+  };
+  if (!jobs.length) { finish(); return null; }
+  const began = performance.now();
+  return drapeLayers(root.name, jobs).then((cut) => {
+    finish();
+    log(`[drape] ${root.name}: ${jobs.length} layers, ${jobs.length - cut} read back, ${cut} cut, in ${Math.round(performance.now() - began)} ms`);
+  });
 }
 
 export {

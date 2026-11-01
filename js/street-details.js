@@ -20,7 +20,7 @@ import { createTreeField } from './trees.js';
 import { REAL_TREES, REAL_TREE_KINDS, REAL_TREE_HEIGHTS } from './tree-geodata.js';
 import { placeStreetTrees } from './tree-placements.js';
 import { createFoodCartParts } from './street-props.js';
-import { pavedPlazaRects, bigParkClearings, parkTreeSites, parkLampSites } from './city-grid.js';
+import { pavedPlazaRects, bigParkClearings, parkTreeSites, parkLampSites, parkLampMeshes } from './city-grid.js';
 import { bryantParkLawn } from './landmarks.js';
 import { GEO } from './city-geodata.js';
 import { createParkLampPoolMaterial } from './tsl-materials.js';
@@ -1217,7 +1217,9 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   // =========================================================================
   // 8. CLUSTERED STREETLIGHTS & STREET FURNITURE LIGHT POOLS
   // =========================================================================
+  const parkLights = [];
   for (const s of parkLampSites || []) {
+    parkLights.push(streetPointSites.length);
     streetPointSites.push({ x: s.x, y: s.y, z: s.z, color: 0xffe4b4, intensity: 32, dist: 14.0 });
   }
 
@@ -1382,6 +1384,19 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
       mesh.setMatrixAt(i, pm0);
       mesh.instanceMatrix.needsUpdate = true;
     }
+  }
+  // the lampposts with glass globes in the parks and plazas (city-grid.js) go over too, globe, pool and light with them
+  if (parkLampMeshes) {
+    const [poleInst, globeInst, poolInst] = parkLampMeshes;
+    (parkLampSites || []).forEach((s, i) => {
+      obstacles.push({ x: s.x, z: s.z, r: 0.17, kind: 'lamp', height: 4.4, parts: [poleInst, i, globeInst, i], out: () => {
+        streetPointSites[parkLights[i]].out = true;
+        let mesh = poolInst, j = i;
+        while (mesh.userData.movedTo?.[j]) [mesh, j] = mesh.userData.movedTo[j];
+        mesh.setMatrixAt(j, pm0);
+        mesh.instanceMatrix.needsUpdate = true;
+      } });
+    });
   }
   for (const cell of poleCells.values()) for (const p of cell) {
     const parts = [];

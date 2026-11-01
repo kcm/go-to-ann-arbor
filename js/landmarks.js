@@ -174,6 +174,22 @@ function buildBigHouse(group, colliders) {
 
   // The video boards behind each end zone, on the outer wall
   const boxMat = new THREE.MeshStandardNodeMaterial({ color: 0x3f474f, roughness: 0.5, metalness: 0.3 });
+  // What they show: GO BLUE in maize on Michigan blue
+  const cv = document.createElement('canvas');
+  cv.width = 1240; cv.height = 400;
+  const cx2 = cv.getContext('2d');
+  const sky = cx2.createLinearGradient(0, 0, 0, 400);
+  sky.addColorStop(0, '#0b3a6b'); sky.addColorStop(1, '#00274c');
+  cx2.fillStyle = sky; cx2.fillRect(0, 0, 1240, 400);
+  cx2.strokeStyle = '#ffcb05'; cx2.lineWidth = 14; cx2.strokeRect(22, 22, 1196, 356);
+  cx2.fillStyle = '#ffcb05';
+  cx2.font = '900 250px "Helvetica Neue", Helvetica, Arial, sans-serif';
+  cx2.textAlign = 'center'; cx2.textBaseline = 'middle';
+  cx2.fillText('GO BLUE', 620, 212, 1100);
+  const screenTex = new THREE.CanvasTexture(cv);
+  screenTex.colorSpace = THREE.SRGBColorSpace;
+  screenTex.anisotropy = 8;
+  const screenMat = new THREE.MeshBasicNodeMaterial({ map: screenTex });
   for (const s of [-1, 1]) {
     const a = s < 0 ? -Math.PI / 2 : Math.PI / 2, rOut = radiiAt(a)[1];
     const bz = cz + s * (rOut - 2);
@@ -181,7 +197,7 @@ function buildBigHouse(group, colliders) {
     board.position.set(cx, G + 23, bz);
     board.castShadow = true;
     group.add(board);
-    const screen = new THREE.Mesh(new THREE.PlaneGeometry(31, 10), new THREE.MeshBasicNodeMaterial({ color: 0x2b4a68 }));
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(31, 10), screenMat);
     screen.position.set(cx, G + 23.5, bz - s * 1.05);
     if (s > 0) screen.rotation.y = Math.PI;
     group.add(screen);
