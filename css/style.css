@@ -1460,14 +1460,18 @@ body.touch-enabled .pop-item { min-height: 44px; }
   }
 }
 
-/* Lamp: the app's logo, Burton Tower against a maize sun over the road, in place of the old A2 bullet */
+/* Lamp: the app's icon (the sightseeing helicopter), in place of the old A2 bullet */
 .mta-bullet.app-logo {
   background: none;
+  object-fit: cover;
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 .mta-bullet.app-logo.loader-bullet {
-  border-radius: 14px;
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 }
 
 /* A short line that comes and goes in the middle of the screen ("Slow down to get out") */

@@ -13,7 +13,7 @@ import { curbStalls } from './curb-parking.js';
 
 const STALL_W = 2.7, MODULE = 18;
 const NEAR = 70, FAR = 650;
-const LAWN_Y = 0.239;
+const LAWN_Y = 0.284; // Lamp: the driveways' height (city-grid.js, LAWN_Y + 0.004)
 
 const KINDS = ['sedan', 'sedan', 'suv', 'sedan', 'suv', 'minivan', 'suv', 'pickup', 'sedan', 'suv', 'van', 'sedan', 'suv', 'pickup', 'sports'];
 const hash = (x, z, k = 0) => { const v = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };

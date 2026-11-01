@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { attribute, float, vec2, vec3, fract, abs, smoothstep, fwidth, max, dot, positionWorld, mix } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { drawOver } from './terrain.js';
 
 // Ann Arbor's golf courses (GEO.golf from build-annarbor.py: OpenStreetMap's fairways, greens, tees and cart paths,
 // with fairways and bunkers filled in where a course isn't mapped): fairways mown in light and dark stripes along their
@@ -163,8 +164,11 @@ function buildTrails(group, trails, y) {
     if (t.length < 6) continue;
     (t[0] ? dirt : paved).push(ribbon(t.slice(2), t[1], t[0] ? y : y + 0.004));
   }
-  addMerged(group, dirt, overlay(0x8f7c5e), 'TrailsDirt');
-  addMerged(group, paved, overlay(0x9a9790), 'TrailsPaved');
+  // Lamp: in front of the lawn but behind the city's own paving (driveways and the campus's walks, drawn over the lawn
+  // as if 6 cm up): the map's footpaths run a little off the surveyed walks, so where the two overlap the walk wins,
+  // and a paved path is the walks' own concrete, so it carries on from them seamlessly where the survey has none
+  addMerged(group, dirt, drawOver(overlay(0x8f7c5e), 0.03), 'TrailsDirt');
+  addMerged(group, paved, drawOver(overlay(0xa29e96), 0.03), 'TrailsPaved');
 }
 
 export { buildGolf, buildTrails };

@@ -64,7 +64,7 @@ import { tagLot, createStripeMaterial } from './parking-stripes.js';
 import { buildPlaygrounds } from './playgrounds.js';
 import { buildGolf, buildTrails } from './golf.js';
 import { buildRiver } from './river.js';
-import { riverDepth } from './terrain.js';
+import { riverDepth, drawOver } from './terrain.js';
 
 // Live construction data consumed by the building and street-detail builders after buildCityGrid().
 let bigParkClearings;
@@ -1752,18 +1752,16 @@ function buildCityGrid(scene) {
     geo.translate(0, y, 0);
     return geo;
   };
-  const LAWN_Y = 0.235;
+  // Lamp: 6 cm over the sidewalk's slab (SW_TOP) under it, more than the 4 cm either may stray from the ground where
+  // they're laid on the slopes (setOnTerrain), so the slab can never show through the grass as wedges of concrete
+  const LAWN_Y = 0.28;
   const hashDrive = (x, z) => { const v = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return v - Math.floor(v); };
   const drivewayConcreteMat = new THREE.MeshStandardNodeMaterial({ color: 0xa29e96, roughness: 0.93 });
   // a home's blacktop: a weathered mid gray, so it reads as a driveway beside the lawn rather than a hole in it
   const drivewayBlacktopMat = new THREE.MeshStandardNodeMaterial({ color: 0x5c5d60, roughness: 0.95 });
   // drawn in front of the lawn under them wherever the two meet: both are laid on the slopes cut their own way, so a
-  // few millimetres apart the lawn would show through the driveway in patches across the tree lawn
-  for (const m of [drivewayConcreteMat, drivewayBlacktopMat]) {
-    m.polygonOffset = true;
-    m.polygonOffsetFactor = -2;
-    m.polygonOffsetUnits = -4;
-  }
+  // few millimetres apart the lawn would show through the driveways and front walks in wedges (drawOver, terrain.js)
+  for (const m of [drivewayConcreteMat, drivewayBlacktopMat]) drawOver(m);
   const lawnGeos = [];
   for (const rings of GEO.lawns) lawnGeos.push(flatGeo(rings.map(toRing), LAWN_Y));
   mergeInto(lawnGeos, cpLawnMat);
@@ -1782,8 +1780,27 @@ function buildCityGrid(scene) {
     // big paved yards (lots the map doesn't call parking, school and church yards) are asphalt
     let area = 0;
     for (let i = 0, j = r[0].length - 1; i < r[0].length; j = i++) area += r[0][j].x * r[0][i].z - r[0][i].x * r[0][j].z;
-    const asphalt = Math.abs(area) / 2 > 120 || hashDrive(r[0][0].x, r[0][0].z) < 0.25;
-    (asphalt ? blacktopGeos : concreteGeos).push(flatGeo(r, LAWN_Y + 0.008));
+    // Lamp: the aprons that join a driveway across the sidewalk and tree lawn to the curb (small, four-cornered) are
+    // always concrete, as the sidewalk is: picked at random, a blacktop one read as a dark hole in the sidewalk
+    const apron = r[0].length <= 5 && Math.abs(area) / 2 < 40;
+    // Lamp: a paving that winds around lawns (holes in it) is a web of walks, as on the Diag and the campus's quads, and
+    // one narrow throughout (its area over half its edge, under 7 m) a long drive or walk: concrete, or now and then
+    // blacktop as the small ones, like the footpaths drawn along them; only wide paved yards are always blacktop
+    let edge = 0, net = Math.abs(area);
+    for (let k = 0; k < r.length; k++) {
+      const ring = r[k];
+      let a = 0;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        edge += Math.hypot(ring[i].x - ring[j].x, ring[i].z - ring[j].z);
+        a += ring[j].x * ring[i].z - ring[i].x * ring[j].z;
+      }
+      if (k) net -= Math.abs(a);
+    }
+    const big = Math.abs(area) / 2 > 120, web = r.length > 1, wide = net / edge >= 7;
+    const asphalt = big ? wide && !web || (!web && hashDrive(r[0][0].x, r[0][0].z) < 0.25)
+      : !apron && hashDrive(r[0][0].x, r[0][0].z) < 0.25;
+    const dg = flatGeo(r, LAWN_Y + 0.008);
+    (asphalt ? blacktopGeos : concreteGeos).push(dg);
   }
   // Curb cuts: where a driveway meets the street, a concrete ramp flaring down over the curb to the gutter
   // (GEO.curbCuts: x, z where its middle meets the curb, the way to the street, its width)
@@ -1799,7 +1816,7 @@ function buildCityGrid(scene) {
       // lawn's height 0.6 m in down to the curb's top and stops there, its front flush with the curb's face
       const P = (a, n, y) => [x + tx * a + ux * n, y, z + tz * a + uz * n];
       const h = w / 2;
-      const T0 = P(-h, -0.6, 0.245), T1 = P(h, -0.6, 0.245), M0 = P(-h, 0.01, 0.19), M1 = P(h, 0.01, 0.19);
+      const T0 = P(-h, -0.6, LAWN_Y + 0.01), T1 = P(h, -0.6, LAWN_Y + 0.01), M0 = P(-h, 0.01, 0.19), M1 = P(h, 0.01, 0.19);
       const F0 = P(-h, -0.6, 0), F1 = P(h, -0.6, 0), G0 = P(-h, 0.01, 0), G1 = P(h, 0.01, 0);
       put(...T0, ...M0, ...M1, ...T0, ...M1, ...T1); // the top, down to the curb
       put(...M0, ...G0, ...G1, ...M0, ...G1, ...M1); // the front, lined up with the curb's face

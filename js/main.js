@@ -293,10 +293,33 @@ async function initApp() {
     const added = parkedCars.replay(load('parkedSwaps'));
     if (added.length) { allColliders.push(...added); controllerManager._colliderCells = null; }
   }
+  // Where each way of getting around starts, a view of the city at each (heading 0 faces south, PI north)
+  const SCENIC_STARTS = {
+    // on the Diag, looking up Ingalls Mall to Burton Tower and Hill Auditorium
+    person: { x: 845, z: 242, heading: Math.atan2(797 - 845, 23 - 242) },
+    // Main St at William, in the northbound lane, looking up downtown's shopfronts
+    car: { x: -23, z: 228, heading: Math.atan2(14.8, -378) },
+    // South University's eastbound bike lane, campus on the left
+    cyclist: { x: 660, z: 529, heading: Math.PI / 2 },
+    // high over Stadium Blvd south of the Big House, the stadium below and downtown beyond it
+    helicopter: { x: -30, z: 1950, heading: Math.PI, above: 130 },
+    // on the Huron where it comes closest to campus, the Medical Center on its bluff ahead
+    kayak: { x: 760, z: -880, heading: 0.8 }
+  };
+
   // Reuse teleport placement so saved players return at rest, close to their last positions.
   try {
     // Kept with Lamp's save(), which the preview keeps to one play, so every preview starts in the same place.
     const saved = load('player');
+    if (saved?.version !== 2) {
+      // a first play: each of them waiting at its own start, the player in the car on Main St
+      for (const [mode, s] of Object.entries(SCENIC_STARTS)) {
+        if (!controllerManager.entities[mode]) continue;
+        controllerManager.setMode(mode);
+        controllerManager.teleportActiveTo(s.x, s.z, s.heading, s.above ? groundHeight(s.x, s.z) + s.above : null);
+      }
+      controllerManager.setMode('car');
+    }
     if (saved?.version === 2) {
       for (const mode of Object.keys(controllerManager.entities)) {
         const p = saved.entities?.[mode];
@@ -488,7 +511,7 @@ async function initApp() {
   const gamepadControls = new GamepadControls(controllerManager, cameraSystem, {
     onCycleMode: (step) => {
       const modes = ['person', 'car', 'cyclist', 'helicopter', 'kayak'];
-      selectMode(modes[(modes.indexOf(controllerManager.activeMode) + step + modes.length) % modes.length]);
+      travelBy(modes[(modes.indexOf(controllerManager.activeMode) + step + modes.length) % modes.length]);
     },
     onCycleCamera: cycleCamera,
     onGetInOut: getInOrOut,
@@ -583,6 +606,27 @@ async function initApp() {
     if (currentCam.category !== 'follow') {
       selectCamera('chase', false);
     }
+  }
+
+  // 1 to 5 (the mode buttons, the bumpers): another way of getting around starts at its own view of the city, unless
+  // it's already close by (the car the player just stepped out of), when the player simply takes it
+  function travelBy(mode) {
+    const cm = controllerManager;
+    if (mode === cm.activeMode || !cm.entities[mode]) { selectMode(mode); return; }
+    const here = cm.getActiveEntity().position, there = cm.entities[mode].position;
+    const close = Math.hypot(there.x - here.x, there.z - here.z) < 40;
+    selectMode(mode);
+    if (!close) goToStart(mode);
+  }
+  function goToStart(mode) {
+    const s = SCENIC_STARTS[mode];
+    if (!s) return;
+    controllerManager.teleportActiveTo(s.x, s.z, s.heading, s.above ? groundHeight(s.x, s.z) + s.above : null);
+    touchControls.reset();
+    gamepadControls.reset();
+    cameraSystem.resetForTeleport();
+    selectCamera('chase', true);
+    savePlayerState();
   }
 
   // F (or the controller's X, or the touch button): out of what the player is in, or into the nearest thing: their car,
@@ -728,7 +772,7 @@ async function initApp() {
 
   modeButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
-      selectMode(btn.getAttribute('data-mode'));
+      travelBy(btn.getAttribute('data-mode'));
     });
   });
 
@@ -869,19 +913,19 @@ async function initApp() {
     if (isTypingInField(e)) return;
     switch (e.code) {
       case 'Digit1':
-        selectMode('person');
+        travelBy('person');
         break;
       case 'Digit2':
-        selectMode('car');
+        travelBy('car');
         break;
       case 'Digit3':
-        selectMode('cyclist');
+        travelBy('cyclist');
         break;
       case 'Digit4':
-        selectMode('helicopter');
+        travelBy('helicopter');
         break;
       case 'Digit5':
-        selectMode('kayak');
+        travelBy('kayak');
         break;
       case 'Digit6':
         selectCamera('chase', true);
@@ -1048,7 +1092,20 @@ async function initApp() {
 
   if (elFps) elFps.textContent = '60';
 
+  // Lamp: what each frame's work costs on this machine, logged every ten seconds (milliseconds a frame on average, and
+  // the draws and triangles a frame), to see what slows it down
+  const prof = { t: 0, n: 0, parts: new Map(), draws: 0, tris: 0, next: 10 };
+  let profAt = 0;
+  const mark = (name) => {
+    const t = performance.now();
+    prof.parts.set(name, (prof.parts.get(name) || 0) + (t - profAt));
+    profAt = t;
+  };
+  renderer.info.autoReset = false;
+
   const frame = (f) => {
+    profAt = performance.now();
+    renderer.info.reset();
     const now = f.time * 1000;
     const rawDt = f.dt;
     const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
@@ -1071,9 +1128,12 @@ async function initApp() {
       controllerManager.activeMode,
       cameraSystem.camera
     );
+    mark('player & traffic');
     highwayTraffic.update(dt, cameraSystem.camera, controllerManager.getActiveEntity(), controllerManager.activeMode);
+    mark('highway');
     railways.update(dt, (at) => audioSystem.trainHorn(at));
     parkedCars.update(cameraSystem.camera);
+    mark('trains & parked');
     const kayak = controllerManager.entities.kayak;
     if (kayak.strokes !== heardStrokes) {
       heardStrokes = kayak.strokes;
@@ -1084,9 +1144,12 @@ async function initApp() {
       nextPlayerSave = now + 5000;
     }
     if (outskirts.update) outskirts.update(elapsed);
+    mark('misc');
     cityBlocks.update(cameraSystem.currentPos.x, cameraSystem.currentPos.z);
     if (cityBlocks.updateLights) cityBlocks.updateLights(cameraSystem.camera);
+    mark('blocks');
     if (streetDetails.update) streetDetails.update(cameraSystem.camera);
+    mark('street details');
     lightingSystem.update(cameraSystem.currentPos);
     mapSystem.update();
     if (lightingSystem.activePresetId === 'now' && elapsed - nowCheckedAt > 60) {
@@ -1096,9 +1159,11 @@ async function initApp() {
     if (elapsed - weatherAskedAt > 900) askWeather(elapsed);
     precipitation.update(cameraSystem.camera, elapsed);
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.lookId === 'midnight');
+    mark('light, map, weather, sound');
     if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
     // Traffic collisions can move the player after controller updates; finalize moving hierarchies here.
     for (const root of dynamicRoots) root.updateMatrixWorld();
+    mark('culling');
 
     // Render frame via TSL RenderPipeline (SSR + Bloom)
     if (!warmedUp && !warmStart) {
@@ -1121,6 +1186,16 @@ async function initApp() {
       markInit('warmup');
     }
     renderPipeline.render();
+    mark('render');
+    prof.n++;
+    prof.draws += renderer.info.render.drawCalls;
+    prof.tris += renderer.info.render.triangles;
+    if (elapsed >= prof.next && warmedUp) {
+      prof.next = elapsed + 10;
+      const parts = [...prof.parts].map(([k, v]) => `${k} ${(v / prof.n).toFixed(1)}`).join(', ');
+      log(`[frame] ms a frame: ${parts}; ${Math.round(prof.draws / prof.n)} draws, ${(prof.tris / prof.n / 1e6).toFixed(2)}M triangles`);
+      prof.parts.clear(); prof.n = prof.draws = prof.tris = 0;
+    }
     if (!warmedUp) {
       warmedUp = true;
       markInit('firstFrame');
@@ -1154,7 +1229,7 @@ async function initApp() {
 
       const activeEnt = controllerManager.getActiveEntity();
       const mode = controllerManager.activeMode;
-      const mph = Math.round(Math.abs(activeEnt.speed) * 2.237);
+      const mph = Math.round((mode === 'kayak' ? activeEnt.groundSpeed || 0 : Math.abs(activeEnt.speed)) * 2.237);
       // Lamp: height above the ground below (terrain.js)
       const altFt = Math.max(0, Math.round((activeEnt.position.y - groundHeight(activeEnt.position.x, activeEnt.position.z)) * 3.281));
 
@@ -1203,7 +1278,8 @@ async function initApp() {
     if (state.map === true) mapSystem.toggleFullMap(true);
   }
 
-  game({ renderer, init() { const was = pendingRestore(); if (was) startFrom(was); }, frame, touch: false, keyboard: false, snapshot });
+  // sharp: drawing smaller never made frames faster here (the log showed it undone every time), it only blurred the city
+  game({ renderer, init() { const was = pendingRestore(); if (was) startFrom(was); }, frame, touch: false, keyboard: false, snapshot, sharp: true });
   container.appendChild(renderer.domElement);
 }
 

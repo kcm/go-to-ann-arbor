@@ -2824,6 +2824,45 @@ function getWaterWaveTexture() {
  *   through the same wave normals & Fresnel, blurred by the unresolved slopes into the familiar vertical light streaks.
  * - Park lakes, the Reservoir & fountains (well above the harbour) get finer, calmer ripples and a greener, duller body.
  */
+// What disturbs the water, set each frame by the kayak (controllers.js): rings of little waves spreading from where a
+// blade goes in and comes out, each (x, z, age in seconds, strength), and the wake off its bow, (x, z, forward x,
+// forward z) and (strength, 0). They tilt the water's own surface, so they show only as its light and reflections do.
+const WATER_RIPPLES = 6;
+// Kept while the code runs again, like cityUniforms: the river kept from before draws with these same ones
+const waterDisturb = hot(import.meta).keep('waterDisturb', () => ({
+  ripples: Array.from({ length: WATER_RIPPLES }, () => uniform(new THREE.Vector4(0, 0, 99, 0))),
+  bow: uniform(new THREE.Vector4(0, 0, 0, 1)),
+  wake: uniform(new THREE.Vector2(0, 0))
+}));
+
+// The slope those add at p (a vec2, like the waves' own)
+const disturbSlope = (p) => {
+  const e = (x) => exp2(x.mul(1.4427));
+  const slope = vec2(0, 0).toVar();
+  for (const r of waterDisturb.ripples) {
+    const d = p.sub(r.xy), dist = length(d).add(0.001), age = r.z;
+    // a short train of wavelets, about 30 cm apart, running out at 0.6 m/s and spreading, flattening as they go
+    const local = dist.sub(age.mul(0.6).add(0.05));
+    const width = age.mul(0.22).add(0.12);
+    const env = e(local.div(width).pow(2).negate()).mul(r.w).mul(e(age.mul(-1.1))).div(dist.mul(0.8).add(1).sqrt());
+    const k = 2 * Math.PI / 0.3;
+    slope.addAssign(d.div(dist).mul(cos(local.mul(k)).mul(env).mul(0.014 * k)));
+  }
+  // the wake: two arms of waves spreading back from the bow at about 19°, the waves along them standing still
+  // with the kayak, fading over 10 m or so
+  const f = waterDisturb.bow.zw, side = vec2(f.y.negate(), f.x);
+  const rel = p.sub(waterDisturb.bow.xy);
+  const back = dot(rel, f).negate(), v = dot(rel, side);
+  const behind = smoothstep(-0.3, 0.6, back).mul(e(back.max(0).mul(-0.17)));
+  const s = abs(v).sub(back.max(0).mul(0.36).add(0.25));
+  const env = e(s.div(back.max(0).mul(0.07).add(0.18)).pow(2).negate()).mul(behind).mul(waterDisturb.wake.x);
+  const k = 2 * Math.PI / 0.45;
+  const phase = s.mul(0.94).add(back.mul(0.34)).mul(k);
+  const grad = side.mul(sign(v)).add(f.mul(0.36)).mul(0.94).sub(f.mul(0.34));
+  slope.addAssign(grad.mul(cos(phase).mul(env).mul(0.015 * k)));
+  return slope;
+};
+
 function createWaterMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({
     metalness: 0.0,
@@ -2869,6 +2908,7 @@ function createWaterMaterial() {
       variance.addAssign(max(smp.z.sub(dot(smp.xy, smp.xy)), 0.0).mul(amp.mul(amp)));
       crest.addAssign(smp.w.mul(sigma));
     }
+    slope.addAssign(disturbSlope(p));
     return vec4(slope, variance, crest.mul(4.0));
   })();
 
@@ -3388,6 +3428,8 @@ function createCarFlareMaterial() {
 
 export {
   cityUniforms,
+  waterDisturb,
+  WATER_RIPPLES,
   WALL_KINDS,
   filteredPulse,
   createCurtainWallMaterial,

@@ -1290,8 +1290,10 @@ const ANN_ARBOR_PAINT = {
     [0x34433a, 1]],
   van: [[0xf3f4f5, 0], [0xf3f4f5, 0], [0x00274c, 0], [0xbcc2c8, 1], [0xf0f1f2, 0], [0x00274c, 0], [0x8e959c, 0]],
   taxi: [[0xc8ced5, 1]],
-  // the odd sports car: red, Michigan blue, black, silver, white, deep green
-  sports: [[0xb3141c, 1], [0x00274c, 1], [0x121417, 1], [0xc3c8cd, 1], [0xf2f3f4, 0], [0x1f4a34, 1], [0xc2401a, 1]]
+  // the odd sports car, in the bold colours they're sold in: racing red, maize, orange, lime, bright blue, Michigan
+  // blue, purple, teal, white, black, silver (11, a prime, so traffic's every-7th numbering doesn't land on one colour)
+  sports: [[0xc8102e, 1], [0xffcb05, 0], [0xf26a1b, 1], [0x7fbf2a, 1], [0x1e5bd8, 1], [0x00274c, 1], [0x5b2a86, 1],
+    [0x0f8a8a, 1], [0xf2f3f4, 0], [0x121417, 1], [0xc3c8cd, 1]]
 };
 // One of them for car number i (or a hash 0..1 times 1000), with its own trim, wheels and plate
 function annArborCar(kind, i) {

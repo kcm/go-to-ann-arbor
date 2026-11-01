@@ -9,7 +9,7 @@
 // under it, so nothing leans or floats. What moves asks groundHeight each frame.
 
 import * as THREE from 'three/webgpu';
-import { float, texture, uniform, vec2 } from 'three/tsl';
+import { float, texture, uniform, vec2, positionLocal, positionWorld, cameraPosition, normalize, abs, max, min } from 'three/tsl';
 import { hot, asset, log, work } from '../lamp-game.js';
 import { STADIUM, radiiAt, bowlSurface } from './stadium-shape.js';
 import { GEO } from './city-geodata.js';
@@ -858,7 +858,7 @@ const isIdentity = (m) => m.elements.every((v, i) => Math.abs(v - IDENTITY.eleme
 // marked userData.terrain = 'set' was put on the ground where it was built and is left alone, children included.
 // The cutting is the slow part of a start: it's done on several cores and saved, so a later start with the same city
 // reads it back (drapeLayers). Answers a promise when there's cutting to wait for, else nothing.
-function setOnTerrain(root, tolerance = 0.05) {
+function setOnTerrain(root, tolerance = 0.04) {
   if (!grid || !root) return null;
   root.updateMatrixWorld(true);
   const replace = [], jobs = [];
@@ -929,7 +929,22 @@ function setOnTerrain(root, tolerance = 0.05) {
   });
 }
 
+// A flat layer laid on another (a driveway on the lawn, a fairway on the grass) drawn in front of it as if `lift`
+// metres higher: each vertex is moved along its own line of sight toward the camera, so it covers the same pixels and
+// only its depth changes, by what a lift of `lift` comes to at the angle it's seen from (capped far off at a glance).
+// Both layers are cut to follow the slopes their own way and can stray a few cm apart, so a few mm of real height
+// between them isn't enough: the one under would show through in wedges.
+function drawOver(mat, lift = 0.06) {
+  const toCamera = cameraPosition.sub(positionWorld);
+  const dir = normalize(toCamera);
+  const pull = min(float(lift).div(max(abs(dir.y), 0.02)), toCamera.length().mul(0.5));
+  mat.positionNode = positionLocal.add(dir.mul(pull));
+  mat.polygonOffset = false;
+  return mat;
+}
+
 export {
+  drawOver,
   loadTerrain, groundHeight, riverbedHeight, riverDepth, riverFlow, nearestWater, waterLevel, bridgeDecks, groundUnder, stadiumGround, groundSlope, groundTilt, groundHeightNode,
   tessellate, drapeGeometry, liftGeometry, liftInstances, setOnTerrain
 };

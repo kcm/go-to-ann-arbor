@@ -27,6 +27,7 @@ import { PersonCrowd, PersonRig, PEDESTRIAN_DIVE_DURATION } from './pedestrians.
 import { HEADLIGHTS, createVehicleHeadlight, placeVehicleHeadlight } from './vehicle-lights.js';
 import { bryantParkLawn } from './landmarks.js';
 import { groundHeight, groundTilt, nearestWater, riverDepth, riverFlow, stadiumGround, waterLevel } from './terrain.js';
+import { WATER_RIPPLES, waterDisturb } from './tsl-materials.js';
 import { polygonContact, polygonContains } from './building-collision.js';
 import { bowlSurface } from './stadium-shape.js';
 import { hot } from '../lamp-game.js';
@@ -37,7 +38,7 @@ import { hot } from '../lamp-game.js';
 const SPAWN_Z = 100;
 // The kayak sets out on Argo Pond, by the canoe livery, and the river carries it on down towards Gallup Park
 const KAYAK_LAUNCH = { x: 210, z: -1150 };
-const KAYAK_CURRENT = 1.1; // m/s, out in the middle
+const KAYAK_CURRENT = 1.5; // m/s, out in the middle at an ordinary flow (riverScale)
 // The player's own car: a black Forester with GO BLU plates
 const OWN_CAR = { kind: 'forester', hex: 0x16181b, style: 0 };
 const isOwnCar = (look) => look.kind === OWN_CAR.kind && look.hex === OWN_CAR.hex;
@@ -61,9 +62,14 @@ const CAR_HANDLING = {
   minivan: { mass: 2000, speed: 33, acceleration: 3.8, brake: 8.5, grip: 8.4, cornering: 8.5, wheelbase: 3.03, steer: 7.5, roll: 0.015 },
   pickup: { mass: 2400, speed: 35, acceleration: 4.8, powerSpeed: 11, brake: 8, grip: 7.8, cornering: 7.6, wheelbase: 3.7, steer: 7, roll: 0.017, pitch: 0.034 },
   van: { mass: 2700, speed: 30, acceleration: 3.2, powerSpeed: 11, brake: 7.5, grip: 7.2, cornering: 7, wheelbase: 3.6, steer: 6.5, roll: 0.02, pitch: 0.036 },
-  sports: { mass: 1450, speed: 54, acceleration: 8.5, powerSpeed: 24, brake: 12, drag: 0.0009, grip: 13, cornering: 14, wheelbase: 2.72, steer: 14, roll: 0.007, pitch: 0.016 }
+  sports: { mass: 1450, speed: 76, acceleration: 9.5, powerSpeed: 30, brake: 12, drag: 0.0006, grip: 15, cornering: 17, wheelbase: 2.72, steer: 16, roll: 0.007, pitch: 0.016 }
 };
-const carDrive = (kind) => ({ mass: 1500, steer: 10, roll: 0.012, pitch: 0.026, ...CAR_DRIVE, ...CAR_HANDLING[kind] });
+// Lamp: a game's cars turn in sharper than the real ones' figures above: more grip in a bend, a quicker wheel
+const carDrive = (kind) => {
+  const d = { mass: 1500, steer: 10, roll: 0.012, pitch: 0.026, ...CAR_DRIVE, ...CAR_HANDLING[kind] };
+  d.grip *= 1.3; d.cornering *= 1.45; d.steer *= 1.6;
+  return d;
+};
 // Faster than this (m/s, about 14 km/h) and the doors stay shut
 const EXIT_SPEED = 4;
 
@@ -377,6 +383,11 @@ class ThirdPersonControllerManager {
       active._riderHidden = false;
       active._posedX = NaN;
     } else if (mode === 'kayak') active._paddlerHidden = false;
+    if (mode !== 'kayak' && this.entities.kayak) {
+      for (const r of this.entities.kayak.ripples) r.age = 99;
+      waterDisturb.wake.value.x = 0;
+      this.updateRipples(this.entities.kayak, 0);
+    }
     const car = this.entities.car;
     if (mode !== 'car' && car?.carState) car.carState.value.x = car.carState.value.w = 0;
   }
@@ -972,9 +983,21 @@ class ThirdPersonControllerManager {
     const paddle = new THREE.Group();
     paddle.position.set(0, 0.58, 0.16);
     paddle.add(new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 2.1, 8).rotateZ(Math.PI / 2), shaftMat));
+    // each blade a touring paddle's: narrow at the throat on the shaft, flaring to a broad rounded tip, a little
+    // asymmetric (the top edge longer), with softened edges
+    const outline = new THREE.Shape();
+    outline.moveTo(0, -0.022);
+    outline.bezierCurveTo(0.12, -0.03, 0.2, -0.078, 0.3, -0.082);
+    outline.bezierCurveTo(0.42, -0.086, 0.47, -0.05, 0.47, 0.0);
+    outline.bezierCurveTo(0.47, 0.06, 0.41, 0.092, 0.3, 0.09);
+    outline.bezierCurveTo(0.18, 0.088, 0.1, 0.03, 0, 0.022);
+    outline.closePath();
+    const bladeGeo = new THREE.ExtrudeGeometry(outline, { depth: 0.006, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.004, bevelSegments: 2, curveSegments: 10 })
+      .translate(0, 0, -0.003);
     for (const end of [1, -1]) {
-      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.16, 0.012), bladeMat);
-      blade.position.x = end * 1.02;
+      const blade = new THREE.Mesh(bladeGeo, bladeMat);
+      blade.position.x = end * 0.8;
+      if (end < 0) blade.rotation.y = Math.PI;
       paddle.add(blade);
     }
     tiltPivot.add(paddle);
@@ -991,7 +1014,12 @@ class ThirdPersonControllerManager {
     kayakShadow.renderOrder = 998;
     root.add(kayakShadow);
 
+
     this.scene.add(root);
+
+    // Where a blade goes in and comes out, the water ripples in rings, spreading and fading as the current carries
+    // them off (updateRipples sets them on the water's own surface, tsl-materials.js)
+    const ripples = Array.from({ length: WATER_RIPPLES }, () => ({ x: 0, z: 0, age: 99, strength: 0 }));
 
     const launch = nearestWater(KAYAK_LAUNCH.x, KAYAK_LAUNCH.z, 400) || KAYAK_LAUNCH;
     const y = waterLevel(launch.x, launch.z) ?? groundHeight(launch.x, launch.z);
@@ -1001,6 +1029,7 @@ class ThirdPersonControllerManager {
       mesh: root,
       tiltPivot,
       paddle,
+      ripples,
       paddlerCrowd,
       paddlerRig,
       seat: new THREE.Vector3(0, 0.02, -0.14),
@@ -1017,8 +1046,8 @@ class ThirdPersonControllerManager {
       strokeAmp: 0,
       strokes: 0,
       cameraTargetOffset: new THREE.Vector3(0, 0.85, 0),
-      chaseDistance: 5.6,
-      chaseHeight: 1.75
+      chaseDistance: 7.6,
+      chaseHeight: 2.3
     };
   }
 
@@ -1558,7 +1587,7 @@ class ThirdPersonControllerManager {
     const steps = Math.ceil(dt * 120);
     const step = dt / steps;
     const steerResponse = 1 - Math.exp(-D.steer * step);
-    const yawResponse = 1 - Math.exp(-5 * step);
+    const yawResponse = 1 - Math.exp(-11 * step);
     const tireResponse = 1 - Math.exp(-4 * step);
     for (let i = 0; i < steps; i++) {
       const sin = Math.sin(c.heading), cos = Math.cos(c.heading);
@@ -1582,7 +1611,7 @@ class ThirdPersonControllerManager {
       const yawLimit = steeringGrip / Math.max(2, Math.abs(speed));
       const targetYaw = Math.max(-yawLimit, Math.min(yawLimit, speed * Math.tan(c.steerAngle) / D.wheelbase));
       // Collision spin remains part of the yaw velocity; the tires gradually regain control.
-      const yawStep = steeringGrip * 0.65 * step;
+      const yawStep = steeringGrip * 1.4 * step;
       c.angularVel += Math.max(-yawStep, Math.min(yawStep, (targetYaw - c.angularVel) * yawResponse));
       c.heading += c.angularVel * step;
 
@@ -1676,27 +1705,64 @@ class ThirdPersonControllerManager {
     const throttle = Number(this.keys.forward || 0) - 0.6 * Number(this.keys.backward || 0);
     const turn = Number(this.keys.left || 0) - Number(this.keys.right || 0);
 
-    if (throttle) {
-      const target = throttle * 4.4;
-      const rate = 1.7 * dt;
-      k.speed += Math.max(-rate, Math.min(rate, target - k.speed));
-    } else {
-      k.speed *= Math.exp(-0.45 * dt);
+    // the stroke: one blade, then the other, at a pace set by how hard the player paddles. Each blade goes in up by
+    // the paddler's feet, is pulled back along the hull fully under water, and comes out at the hip (a reverse stroke
+    // runs the other way); the shaft swings over to the other side in between.
+    const effort = Math.min(1, Math.max(Math.abs(throttle), Math.abs(turn)));
+    k.strokeAmp += ((effort > 0.05 ? 1 : 0) - k.strokeAmp) * Math.min(1, dt * 4);
+    const entry = (phase) => Math.floor((phase - 0.15 * Math.PI) / Math.PI);
+    const before = entry(k.stroke);
+    if (effort > 0.05) k.stroke += dt * Math.PI * 2 * 0.72 * (0.6 + 0.4 * effort) * (throttle < 0 ? -1 : 1);
+    const s = Math.sin(k.stroke), as = Math.abs(s);
+    const deep = as < 0.7 ? (as / 0.7) ** 2 * (3 - 2 * as / 0.7) : 1; // held down through the pull
+    const roll = k.strokeAmp * 0.84 * Math.sign(s) * deep;
+    const yaw = k.strokeAmp * 0.55 * Math.cos(k.stroke);
+    k.paddle.rotation.set(0, yaw, roll, 'YZX');
+    const dx = Math.cos(roll) * Math.cos(yaw), dy = Math.sin(roll), dz = -Math.cos(roll) * Math.sin(yaw);
+    const c = k.paddle.position;
+    k.hands[0].set(c.x + dx * 0.34, c.y + dy * 0.34, c.z + dz * 0.34);
+    k.hands[1].set(c.x - dx * 0.34, c.y - dy * 0.34, c.z - dz * 0.34);
+    k.twist = -yaw * 0.6;
+    // the lower blade's middle (in the kayak's frame), and how much of the blade is under the water line
+    const down = dy > 0 ? -1 : 1;
+    const bx = c.x + down * dx * 1.02, by = c.y + down * dy * 1.02, bz = c.z + down * dz * 1.02;
+    const wet = Math.max(0, Math.min(1, (0.02 - by) / 0.16 + 0.5));
+    const sh = Math.sin(k.heading), ch = Math.cos(k.heading);
+    const bladeX = k.position.x + bx * ch + bz * sh, bladeZ = k.position.z - bx * sh + bz * ch;
+    if (entry(k.stroke) !== before) {
+      k.strokes++;
+      k.strokeSide = -down;
+      this.kayakRipple(k, bladeX, bladeZ, 1);
     }
-    const turnTarget = turn * (0.95 + Math.min(1, Math.abs(k.speed) / 3) * 0.45);
+    if (wet > 0.5 && !k._bladeIn) k._bladeIn = true;
+    else if (wet < 0.2 && k._bladeIn) { k._bladeIn = false; this.kayakRipple(k, bladeX, bladeZ, 0.6); }
+
+    // Only a blade in the water moves the kayak: each pull surges it on, and the hull's drag (rising with the square
+    // of its speed) slows it between strokes, to about 4 m/s flat out
+    const pull = Math.abs(throttle) > 0.05 ? wet * Math.sign(throttle) * 3.1 * (0.6 + 0.4 * Math.abs(throttle)) : 0;
+    k.speed += (pull - 0.11 * k.speed * Math.abs(k.speed) - 0.22 * k.speed) * dt;
+    // a turn is a sweep stroke: stronger while a blade is in
+    const turnTarget = turn * (0.6 + 0.5 * wet) * (0.95 + Math.min(1, Math.abs(k.speed) / 3) * 0.45);
     k.turnVel += (turnTarget - k.turnVel) * Math.min(1, dt * 3.2);
 
-    // the current, strongest out in the middle of the river
+    // the current, strongest out in the middle of the river, carries the kayak along, and where it runs faster at
+    // one end than the other (a bend, the edge of the channel) it turns the kayak too
     const flow = this._flow ??= { x: 0, z: 0 };
+    const current = (x, z) => riverFlow(x, z, flow) ? KAYAK_CURRENT * this.riverScale * (0.35 + 0.65 * riverDepth(x, z)) : 0;
     let cx = 0, cz = 0;
-    if (riverFlow(k.position.x, k.position.z, flow)) {
-      const pull = KAYAK_CURRENT * this.riverScale * (0.4 + 0.6 * riverDepth(k.position.x, k.position.z));
-      cx = flow.x * pull;
-      cz = flow.z * pull;
+    {
+      const m = current(k.position.x, k.position.z);
+      cx = flow.x * m; cz = flow.z * m;
     }
-    const follow = Math.min(1, dt * 1.2);
+    const follow = Math.min(1, dt * 0.9);
     k.driftX += (cx - k.driftX) * follow;
     k.driftZ += (cz - k.driftZ) * follow;
+    {
+      const mb = current(k.position.x + sh * 1.6, k.position.z + ch * 1.6), bowX = flow.x * mb, bowZ = flow.z * mb;
+      const ms = current(k.position.x - sh * 1.6, k.position.z - ch * 1.6), sternX = flow.x * ms, sternZ = flow.z * ms;
+      // across the hull: what the bow is pushed sideways more than the stern swings the heading
+      k.turnVel += ((bowX - sternX) * ch - (bowZ - sternZ) * sh) / 3.2 * Math.min(1, dt * 2.5);
+    }
 
     // afloat: the middle, the bow and the stern all over open water
     const afloat = (x, z, h) => {
@@ -1735,31 +1801,36 @@ class ThirdPersonControllerManager {
       }
     }
     k.position.y = waterLevel(k.position.x, k.position.z) ?? k.position.y;
-
-    // the stroke: one blade, then the other, at a pace set by how hard the player paddles
-    const effort = Math.min(1, Math.max(Math.abs(throttle), Math.abs(turn)));
-    k.strokeAmp += ((effort > 0.05 ? 1 : 0) - k.strokeAmp) * Math.min(1, dt * 4);
-    const entry = (phase) => Math.floor((phase - 0.15 * Math.PI) / Math.PI);
-    const before = entry(k.stroke);
-    if (effort > 0.05) k.stroke += dt * Math.PI * 2 * 0.75 * (0.6 + 0.4 * effort) * (throttle < 0 ? -1 : 1);
-    if (entry(k.stroke) !== before) {
-      k.strokes++;
-      k.strokeSide = Math.sin(k.stroke) > 0 ? -1 : 1;
-    }
-    const roll = k.strokeAmp * 0.72 * Math.sin(k.stroke);
-    const yaw = k.strokeAmp * 0.55 * Math.cos(k.stroke);
-    k.paddle.rotation.set(0, yaw, roll, 'YZX');
-    const dx = Math.cos(roll) * Math.cos(yaw), dy = Math.sin(roll), dz = -Math.cos(roll) * Math.sin(yaw);
-    const c = k.paddle.position;
-    k.hands[0].set(c.x + dx * 0.34, c.y + dy * 0.34, c.z + dz * 0.34);
-    k.hands[1].set(c.x - dx * 0.34, c.y - dy * 0.34, c.z - dz * 0.34);
-    k.twist = -yaw * 0.6;
+    // over the river bed: the paddling and the current together, which the speed on screen shows
+    k.groundSpeed = Math.min(9, Math.hypot(k.position.x - x, k.position.z - z) / dt);
+    const through = Math.abs(k.speed);
+    // the wake off the bow, as strong as the kayak is fast through the water
+    const w = waterDisturb.wake.value;
+    w.x += (Math.min(1, Math.max(0, through - 0.2) / 3) - w.x) * Math.min(1, dt * 3);
+    waterDisturb.bow.value.set(k.position.x + sh * 1.7, k.position.z + ch * 1.7, sh, ch);
+    this.updateRipples(k, dt);
 
     // bobbing on the water, leaning into turns and rocking with the stroke
     k.tiltPivot.position.y = Math.sin(elapsed * 1.7) * 0.015;
     k.tiltPivot.rotation.z = -k.turnVel * 0.06 * Math.min(1, Math.abs(k.speed) / 2) + Math.sin(elapsed * 1.3) * 0.012 + roll * 0.03;
     k.tiltPivot.rotation.x = Math.sin(elapsed * 1.1 + 0.7) * 0.008;
   }
+
+  // A ring on the water at (x, z), of `size` metres across when it has spread, at `strength` (its first opacity)
+  kayakRipple(k, x, z, strength) {
+    if (riverDepth(x, z) < 0.1) return;
+    const r = k.ripples.reduce((a, b) => (b.age > a.age ? b : a));
+    r.x = x; r.z = z; r.age = 0; r.strength = strength;
+  }
+  updateRipples(k, dt) {
+    k.ripples.forEach((r, i) => {
+      r.age += dt;
+      r.x += k.driftX * dt;
+      r.z += k.driftZ * dt;
+      waterDisturb.ripples[i].value.set(r.x, r.z, r.age, r.age < 4 ? r.strength : 0);
+    });
+  }
+
 
   // Where the helicopter's skids come to rest: the highest of the ground (the stadium's bowl inside its wall) and the
   // roofs under its skids that it was above. The roofs it rests on are kept, so they don't push it aside.

@@ -1,5 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { positionWorld, floor, fract, sin, dot, vec2, mix, color } from 'three/tsl';
+import { drawOver } from './terrain.js';
 
 // Ann Arbor's park playgrounds, where OpenStreetMap has them (GEO.playgrounds from build-annarbor.py): wood-chip
 // ground on the real outline, a play tower with a slide in the middle, and a swing set beside it where there's room.
@@ -99,7 +101,13 @@ function buildPlaygrounds(group, list, flatGeo, toRing, y) {
     }
   }
   const chipGeo = mergeGeometries(chips, false);
-  const chipMesh = new THREE.Mesh(chipGeo, new THREE.MeshStandardNodeMaterial({ color: 0x8b6a4b, roughness: 1 }));
+  // drawn in front of the lawn it sits on (drawOver, terrain.js): only a centimetre above it, the grass cut to the
+  // slopes its own way came up through the chips in spikes. Mottled in two sizes of patch so it reads as mulch.
+  const chipMat = drawOver(new THREE.MeshStandardNodeMaterial({ roughness: 1 }));
+  const cell = (s) => { const p = floor(positionWorld.xz.mul(s)); return fract(sin(dot(p, vec2(12.9898, 78.233))).mul(43758.5453)); };
+  const mottle = cell(2.5).mul(0.6).add(cell(9).mul(0.4));
+  chipMat.colorNode = mix(color(0x6e4f33), color(0x9a7650), mottle);
+  const chipMesh = new THREE.Mesh(chipGeo, chipMat);
   chipMesh.receiveShadow = true;
   group.add(chipMesh);
   const mat = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.05 });

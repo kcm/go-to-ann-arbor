@@ -878,10 +878,12 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         if (warming && warming !== 'ask') { nextFrame(loop); return; }
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
         // How long the page took to build the game, which Lamp reads to know how long its preview's build may take.
-        if (!last && mine === 1) log(`Lamp: the game was built and drawn ${(now / 1000).toFixed(1)} s after the page opened.`);
+        const first = !last && mine === 1;
+        if (first) log(`Lamp: the game was built and drawn ${(now / 1000).toFixed(1)} s after the page opened.`);
         last = now;
         measure(now);
         drewThisFrame = false;
+        framesDrawn++;
         const began = clockNow();
         try { step(dt); } catch (e) {
             // New code swapped in or run again that fails as it runs goes back out the safe way: the page opens again
@@ -897,6 +899,9 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         frameCost = frameCost ? frameCost * 0.9 + cost * 0.1 : cost;
         if (reporting && !warming) firstDrawn(cost);
         shoot();
+        // The first frame of play is drawn, and on screen at the next: the app's picture for Lamp's desk is taken from
+        // there, past the loading screen (`tellPlaying`).
+        if (first) nextFrame(() => tellPlaying('playing'));
         // Opened again for a change: it's on screen with this first frame.
         if (shownFor != null && !curtain && !runningAgain && reopenedFrame++ > 0) { tellHost(shownFor, 'shown'); shownFor = null; }
         lift();
@@ -965,6 +970,10 @@ let hooks = {}, started = false, waiting = null, pill = null;
 // the state didn't take.
 let pending = null, reopened = false, taken = false, guarding = false;
 const host = () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampLive;
+// Whether the game is past its loading screen, for the picture of the app Lamp's desk shows (`LampPagePlaying` in a Mac
+// app): 'loading' from when this runtime loads, 'playing' at the first frame of play.
+const tellPlaying = state => { try { const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.lampPlaying; h && h.postMessage(state); } catch (e) {} };
+if (!preview) tellPlaying('loading');
 // Putting in what was built in the background says only its report: the change it's part of has said the rest.
 const tellHost = (gen, state, why, more) => { if (runningAgain && runningAgain.change.quiet && state !== 'report') return; try { const h = host(); h && h.postMessage({ gen, state, ...(why ? { why } : {}), ...more }); } catch (e) {} };
 // What a change of these is, is code: swapped in, or the page is opened again for it.
@@ -1176,7 +1185,11 @@ export function hot(meta) {
     entry.disposers = [];
     if (!loading.has(path) && !entry.versions.length) {
         // The version the page loaded first, which every module that imported it holds: known once it has run.
-        import(meta.url).then(ns => { if (!entry.versions.length) entry.versions.push(versionOf(ns)); }, () => {});
+        // A module that awaits at its top level can be handed over before it has finished: its exports can't be read
+        // yet, so it's asked again.
+        const first = tries => import(meta.url).then(ns => { if (!entry.versions.length) addVersion(entry, versionOf(ns)); })
+            .catch(e => { if (e instanceof ReferenceError && tries) after(250, () => first(tries - 1)); });
+        first(40);
         fetch(meta.url, { cache: 'no-store' }).then(a => a.ok ? a.text() : null).then(t => { if (entry.text == null) entry.text = t; }, () => {});
     }
     return {
@@ -1189,6 +1202,12 @@ export function hot(meta) {
     };
 }
 
+// Only the last version's text is compared with: an array's can be megabytes, for every run of the code.
+function addVersion(m, version) {
+    const last = m.versions[m.versions.length - 1];
+    if (last) last.made = null;
+    m.versions.push(version);
+}
 function versionOf(ns) {
     const made = {};
     for (const name of Object.keys(ns)) {
@@ -1417,7 +1436,7 @@ async function swapModules(changed) {
     for (const path of boundaries) {
         const m = modules.get(path), ns = loaded.get(path);
         const changedNames = putIn(m, ns);
-        m.versions.push(made.get(path));
+        addVersion(m, made.get(path));
         m.text = texts.get(path);
         if (m.onAccept) {
             try {
@@ -1429,7 +1448,7 @@ async function swapModules(changed) {
     for (const path of order) {
         latest.set(path, addresses.get(path));
         const m = modules.get(path);
-        if (m && !boundaries.has(path)) { m.versions.push(made.get(path)); m.text = texts.get(path); }
+        if (m && !boundaries.has(path)) { addVersion(m, made.get(path)); m.text = texts.get(path); }
         if (!boundaries.has(path)) said.push(`${path}, run again for the modules that import it`);
     }
     for (const path of changed) texts.delete(path);
@@ -1668,9 +1687,9 @@ function keep(path, key, build, options = {}) {
         keepsWaiting.add(waiting);
         value = Promise.resolve(value).finally(() => keepsWaiting.delete(waiting));
         const drawnBefore = draws;
-        value.then(v => { entry.made = v; entry.timers = waiting.timers; entry.ms = performance.now() - began; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
-            () => { if (kept.get(id) === entry) kept.delete(id); });
-    } else { entry.made = value; entry.ms = performance.now() - began; }
+        value.then(v => { entry.made = v; entry.settled = true; entry.timers = waiting.timers; entry.ms = performance.now() - began; if (draws !== drawnBefore) entry.draws = null; own(v, waiting); },
+            () => { entry.settled = true; if (kept.get(id) === entry) kept.delete(id); });
+    } else { entry.made = value; entry.settled = true; entry.ms = performance.now() - began; }
     entry.value = value;
     // The part it replaces goes, sparing what the new one shares with it (materials made once, so compiled once).
     if (had) Promise.resolve(value).then(v => letGo(had, usedBy(v)), () => letGo(had));
@@ -1727,25 +1746,136 @@ function own(made, waiting) {
 }
 
 // `spare` holds the geometry and materials a part that replaces this one goes on using (made once and shared by both,
-// so the new part's shaders were compiled long ago): those stay.
+// so the new part's shaders were compiled long ago): those stay, and so does whatever the game still holds elsewhere
+// (`stillHeld`). A part with a `dispose` of its own takes care of everything it made.
 function letGo(k, spare = new Set()) {
     // A part built in the background lets go of the one it replaced once it's let go of itself.
     if (k.replaces) { letGo(k.replaces); k.replaces = null; }
     Promise.resolve(k.value).then(v => {
         try {
             if (k.dispose) return k.dispose(v);
-            // A part that's a plain object of three.js objects ({ group, heights }) lets go of each.
-            for (const o of objectsOf(v)) {
-                o.removeFromParent();
-                o.traverse(o => {
-                    if (o.geometry && !spare.has(o.geometry)) o.geometry.dispose();
-                    for (const m of [o.material].flat()) if (m && m.dispose && !spare.has(m)) m.dispose();
-                });
+            // A part that's a plain object of three.js objects ({ group, heights }) lets go of each, out of its scene
+            // first, or the scene would count as still holding it.
+            const roots = keptRoots(), objects = objectsOf(v).filter(o => !roots.has(o));
+            for (const o of objects) o.removeFromParent();
+            const held = stillHeld(roots);
+            for (const o of objects) {
+                // A scene still being drawn waits: disposed of now, the renderer would only make it all again, and
+                // nothing would dispose of that. It's disposed of when it's taken apart.
+                if (held.has(o)) { retire(o, true); continue; }
+                disposeTree(o, spare, held);
+                retire(o);
             }
             if (v && !v.isObject3D && typeof v.dispose === 'function') v.dispose();
             else if (v && !v.isObject3D && typeof v.destroy === 'function') v.destroy(true);
         } catch (e) { log(`Lamp: letting go of ${k.key} kept in ${k.path} failed (${e && e.message || e}).`); }
     }, () => {});
+}
+
+// A part let go of can go on being reachable: a module runs again as a new module, and the browser keeps the one it
+// replaces, with whatever its variables point at, for as long as the page is open, and a kept renderer holds on to
+// what it drew. Left as they are, a few such references keep every old part's buffers and objects in the page, the
+// garbage collector walks them all, and each run of the code takes longer than the last until the page runs out of
+// memory. So once nothing is deciding what the game goes on with, what's left of a part is taken apart: its objects
+// lose their children and their own hold on geometry and materials, and whatever still points at them points at
+// nothing heavy. Objects stay valid, on blank geometry and a blank material, for old code that's still calling them.
+//
+// Only roots are remembered, weakly: a part nothing holds simply goes, and this list keeps nothing alive.
+const retired = [], blanks = new Map();
+function disposeTree(root, spare, held) {
+    root.traverse(o => {
+        if (o.geometry && !spare.has(o.geometry) && !held.has(o.geometry)) o.geometry.dispose();
+        for (const m of [o.material].flat()) if (m && m.dispose && !spare.has(m) && !held.has(m)) m.dispose();
+    });
+}
+let emptying = false, emptyAfter = 3000;
+function retire(o, undisposed = false) {
+    retired.push({ ref: new WeakRef(o), undisposed });
+    emptyAfter = 3000;
+    emptySoon();
+}
+function emptySoon() {
+    if (emptying) return;
+    emptying = true;
+    after(emptyAfter, emptyRetired);
+}
+function emptyRetired() {
+    emptying = false;
+    if (!retired.length) return;
+    // A run under way, a build still to finish or an async part still to arrive may yet use what's in the list.
+    if (runningAgain || backgrounds.size || [...kept.values()].some(k => !k.settled)) return emptySoon();
+    try {
+        const roots = keptRoots(), held = stillHeld(roots), drawing = scenesDrawing(), list = retired.splice(0);
+        for (const entry of list) {
+            const root = entry.ref.deref();
+            if (!root || root.parent || roots.has(root)) continue;
+            // Put back in a scene, or kept by something else since: no longer retired. A scene something still draws
+            // is asked about again, more rarely each time, and goes once it isn't drawn.
+            if (drawing.includes(root)) { retired.push(entry); continue; }
+            if (held.has(root)) continue;
+            if (entry.undisposed) disposeTree(root, new Set(), held);
+            emptyOut(root, held);
+        }
+    // Only ever a saving: what couldn't be taken apart goes on as it was.
+    } catch (e) { log(`Lamp: taking apart what the game let go of failed (${e && e.message || e}).`); }
+    if (!retired.length) { emptyAfter = 3000; return; }
+    emptyAfter = Math.min(emptyAfter * 2, 60000);
+    emptySoon();
+}
+function emptyOut(root, held) {
+    const stack = [root];
+    while (stack.length) {
+        const o = stack.pop();
+        if (held.has(o)) continue;
+        // A child that's held elsewhere leaves too: its parent no longer lists it, so it can't go on inheriting from it.
+        for (const child of o.children) { if (child.parent === o) child.parent = null; stack.push(child); }
+        o.children = [];
+        if (o.geometry) o.geometry = blankOf(o.geometry);
+        if (o.material) o.material = blankOf([o.material].flat()[0]);
+    }
+}
+// One empty object of the plainest class a geometry or material comes from, beneath three.js's event dispatcher.
+function blankOf(thing) {
+    if (!thing) return null;
+    const chain = [];
+    for (let c = thing.constructor; c && c !== Function.prototype; c = Object.getPrototypeOf(c)) chain.push(c);
+    const base = chain[Math.max(0, chain.length - 2)];
+    if (!blanks.has(base)) { let made = null; try { made = new base(); } catch (e) {} blanks.set(base, made); }
+    return blanks.get(base);
+}
+// What the game keeps by name: the three.js objects, geometry and materials of every part kept (with its pools,
+// however they're held, so a detached object counts), of what's being built or waiting to be swapped in, and the
+// cameras registered. `stillHeld` is all that with what hangs under it, and every scene the renderer is drawing.
+function keptRoots() {
+    const roots = new Set(), seen = new Set();
+    const walk = (v, depth) => {
+        if (!v || typeof v !== 'object' || seen.has(v) || ArrayBuffer.isView(v) || v instanceof ArrayBuffer || (globalThis.Node && v instanceof Node)) return;
+        if (v.isObject3D || v.isBufferGeometry || v.isMaterial) { roots.add(v); return; }
+        if (depth <= 0) return;
+        seen.add(v);
+        // Another library's object can throw on being read: what can't be read can't be told to be held.
+        let each = [];
+        try { each = [...(v instanceof Map ? v.values() : v instanceof Set ? v : Object.values(v))]; } catch (e) {}
+        for (const x of each) walk(x, depth - 1);
+    };
+    for (const k of kept.values()) {
+        walk(k.made, 3);
+        if (k.replaces) walk(k.replaces.made, 3);
+        if (k.pending) walk(k.pending.value, 3);
+    }
+    for (const entry of cameras.values()) walk(entry, 2);
+    return roots;
+}
+function stillHeld(roots = keptRoots()) {
+    const held = new Set();
+    const add = root => root.traverse(o => {
+        held.add(o);
+        if (o.geometry) held.add(o.geometry);
+        for (const x of [o.material].flat()) if (x) held.add(x);
+    });
+    for (const root of roots) { if (root.isObject3D) add(root); else held.add(root); }
+    for (const scene of scenesDrawing()) if (!held.has(scene)) add(scene);
+    return held;
 }
 
 // MARK: Building in the background
@@ -1845,6 +1975,7 @@ function buildingFrom(path) {
 // Built: its shaders are compiled while the old part is drawn, and it waits to be swapped in with the others.
 async function built(k, p, value) {
     p.waits = true;
+    p.value = value;
     p.ms = performance.now() - p.began;
     p.compiled = await compileAhead(value);
     // Not while the code runs again: that run decides which part the game goes on with.
@@ -1860,7 +1991,7 @@ async function built(k, p, value) {
     backgrounds.delete(k);
     const entry = { path: k.path, key: k.key, text: p.text, inputs: p.inputs, lasting: false, from: p.from, dispose: p.dispose, used: false,
                     stale: false, value, made: value, assets: p.assets, timers: p.timers, draws: 0, cause: p.cause, ms: p.ms,
-                    busy: p.busy, compiled: p.compiled, gen: p.gen, fresh: true, replaces: k };
+                    busy: p.busy, compiled: p.compiled, gen: p.gen, fresh: true, replaces: k, settled: true };
     kept.set(`${k.path} ${k.key}`, entry);
     log(`Lamp: ${k.key} was built in the background in ${seconds(p.ms)} while the game ran${p.compiled == null ? '' : ` (its shaders compiled ahead in ${Math.round(p.compiled)} ms)`}.`);
     if (!backgrounds.size) swapIn();
@@ -1891,12 +2022,28 @@ let lastDrawn = null, drewThisFrame = false, warming = null, warmed = null;
 // Watches the renderer's render() for what it draws, and after the code ran again has its first frame's shaders
 // compiled with compileAsync() before it's drawn, the old frame held on screen meanwhile, so nothing compiles in a
 // frame the player sees. A renderer without compileAsync (Phaser's) is left as it is.
+// Every scene drawn lately, weakly, with the frame it was last drawn in: a second scene (a minimap's, a mirror's) is the
+// game's as much as the first, and one not drawn for a while no longer is. Counted in frames, so a run of the code or a
+// window out of sight, which draw nothing, don't make a scene look abandoned.
+const drawnScenes = [];
+let framesDrawn = 0;
+function noteDrawn(scene) {
+    if (!scene || !scene.isObject3D) return;
+    const known = drawnScenes.find(d => d.ref.deref() === scene);
+    if (known) { known.frame = framesDrawn; return; }
+    drawnScenes.push({ ref: new WeakRef(scene), frame: framesDrawn });
+    if (drawnScenes.length > 8) drawnScenes.splice(drawnScenes.indexOf(drawnScenes.reduce((a, b) => b.frame < a.frame ? b : a)), 1);
+}
+function scenesDrawing() {
+    return drawnScenes.filter(d => framesDrawn - d.frame <= 60).map(d => d.ref.deref()).filter(Boolean);
+}
 function watchRender(r) {
     if (!r || r.__lampRender || typeof r.render !== 'function' || typeof r.compileAsync !== 'function') return;
     const draw = r.render;
     r.__lampRender = true;
     r.render = function (scene, camera, ...rest) {
         if (!drewThisFrame && scene && scene.isObject3D && camera && camera.isCamera) { lastDrawn = { scene, camera }; drewThisFrame = true; }
+        noteDrawn(scene);
         if (warming === 'ask' && lastDrawn) {
             const t = performance.now();
             warming = Promise.resolve().then(() => this.compileAsync(scene, camera)).catch(() => {})
@@ -2321,7 +2468,7 @@ async function runAgain(change, state, roster) {
             }
             const ns = await import(from);
             const m = modules.get(path);
-            if (m) { m.versions.push(versionOf(ns)); m.text = code; }
+            if (m) { addVersion(m, versionOf(ns)); m.text = code; }
             latest.set(path, from);
         } catch (e) {
             return ranAgainFailed(again, `${path} didn't load (${e && e.message || e})`);
