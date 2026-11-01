@@ -119,6 +119,7 @@ function buildTrafficControls(group, network) {
 
   let lights = 0;
   let signs = 0;
+  const obstacles = []; // signal poles and sign posts, solid to the player: { x, z, r }
   const faceYaw = (e) => Math.atan2(-e.dx, -e.dz); // a face turned towards the drivers coming along e
   for (const e of network.edges) {
     const n = e.to;
@@ -135,6 +136,7 @@ function buildTrafficControls(group, network) {
       dummy.position.set(px, g + ARM_Y / 2 + 0.1, pz);
       dummy.scale.set(0.15, ARM_Y + 0.3, 0.15);
       put('pole');
+      obstacles.push({ x: px, z: pz, r: 0.16 });
       // the arm out over the lanes coming up to it
       const reach = Math.min(13, Math.max(3, po - Math.min(...e.lanes) + 1.2));
       const [ax, az] = at(e, s, po - reach / 2);
@@ -162,6 +164,7 @@ function buildTrafficControls(group, network) {
       dummy.position.set(px, g + 1.15, pz);
       dummy.scale.set(0.05, 2.3, 0.05);
       put('post');
+      obstacles.push({ x: px, z: pz, r: 0.1 });
       dummy.position.set(px, g + 2.1, pz);
       dummy.scale.set(0.76, 0.76, 1);
       const yieldSign = e.control === 'yield';
@@ -228,7 +231,7 @@ function buildTrafficControls(group, network) {
   const update = (time) => {
     for (const [lamp, mainRoad, mat] of lamps) mat.userData.on.value = signalPhase(time, mainRoad) === lamp ? 1 : 0;
   };
-  return { lights, signs, update };
+  return { lights, signs, update, obstacles };
 }
 
 export { buildTrafficControls };

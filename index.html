@@ -78,6 +78,7 @@
       <symbol id="i-car" viewBox="0 0 24 24"><path d="M9.6 4.8V3.4a.6.6 0 0 1 .6-.6h3.6a.6.6 0 0 1 .6.6v1.4"/><path d="m5.2 10.5 1.4-4.1A2.2 2.2 0 0 1 8.7 4.8h6.6a2.2 2.2 0 0 1 2.1 1.6l1.4 4.1"/><rect x="3" y="10.5" width="18" height="6.5" rx="2"/><path d="M6 17v2.6M18 17v2.6M6.6 13.8h1.6M15.8 13.8h1.6"/></symbol>
       <symbol id="i-bike" viewBox="0 0 24 24"><circle cx="5.5" cy="16.5" r="3.6"/><circle cx="18.5" cy="16.5" r="3.6"/><path d="M5.5 16.5 9.3 9.6h6.3M11.6 16.5 9.3 9.6M11.6 16.5l4-6.9M5.5 16.5h6.1M15.6 9.6l2.9 6.9M15.6 9.6 14.8 7h2.4M8 8.4h2.8"/></symbol>
       <symbol id="i-heli" viewBox="0 0 24 24"><path d="M3.5 4h15M11 4v3.2"/><path d="M6 12.2a5 5 0 0 1 5-5h1.6a4.4 4.4 0 0 1 4.4 4.4V15H8.8A2.8 2.8 0 0 1 6 12.2z"/><path d="M17 11h4.2M21.2 8.8v4.4M7 19h10.5M9.5 15v4M15 15v4"/></symbol>
+      <symbol id="i-kayak" viewBox="0 0 24 24"><path d="M2.5 15.5c3 1.6 6.2 2.2 9.5 2.2s6.5-.6 9.5-2.2c-3-1.4-6.2-2-9.5-2s-6.5.6-9.5 2z"/><path d="M5 5.5 19 20M4 4.5l2.2.4.4 2.2M20 21l-2.2-.4-.4-2.2"/></symbol>
       <symbol id="i-golden" viewBox="0 0 24 24"><path d="M3 17.5h18M7 17.5a5 5 0 0 1 10 0M12 5v3M5.6 9.6l2 1.6M18.4 9.6l-2 1.6M7.5 21h9"/></symbol>
       <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1M5.5 5.5 7 7M17 17l1.5 1.5M5.5 18.5 7 17M17 7l1.5-1.5"/></symbol>
       <symbol id="i-twilight" viewBox="0 0 24 24"><path d="M3 15.5h18M7.5 19h9M8 15.5a4 4 0 0 1 8 0M17.5 4v3.2M15.9 5.6h3.2M7 7.4v1.8M6.1 8.3h1.8"/></symbol>
@@ -202,7 +203,7 @@
       <button id="mode-person" class="mode-btn" data-mode="person" type="button" title="Person [1]">
         <svg class="icon" aria-hidden="true"><use href="#i-walk"/></svg><span class="mode-label">Walk</span><kbd data-key="Digit1">1</kbd>
       </button>
-      <button id="mode-car" class="mode-btn active" data-mode="car" type="button" title="Car · Yellow Cab [2]">
+      <button id="mode-car" class="mode-btn active" data-mode="car" type="button" title="Car [2]">
         <svg class="icon" aria-hidden="true"><use href="#i-car"/></svg><span class="mode-label">Drive</span><kbd data-key="Digit2">2</kbd>
       </button>
       <button id="mode-cyclist" class="mode-btn" data-mode="cyclist" type="button" title="Cyclist [3]">
@@ -210,6 +211,9 @@
       </button>
       <button id="mode-helicopter" class="mode-btn" data-mode="helicopter" type="button" title="Helicopter [4]">
         <svg class="icon" aria-hidden="true"><use href="#i-heli"/></svg><span class="mode-label">Fly</span><kbd data-key="Digit4">4</kbd>
+      </button>
+      <button id="mode-kayak" class="mode-btn" data-mode="kayak" type="button" title="Kayak [5]">
+        <svg class="icon" aria-hidden="true"><use href="#i-kayak"/></svg><span class="mode-label">Paddle</span><kbd data-key="Digit5">5</kbd>
       </button>
       <kbd class="pad-only" data-pad="RB" aria-hidden="true"></kbd>
     </nav>
@@ -257,20 +261,23 @@
       <button class="touch-action" data-touch-action="down" type="button" aria-label="Descend" aria-pressed="false" hidden>
         <span aria-hidden="true">↓</span><span data-touch-label="down">Descend</span>
       </button>
+      <button class="touch-action" data-touch-tap="getinout" type="button" aria-label="Get in" hidden>
+        <span aria-hidden="true">⇄</span><span data-touch-label="getinout">Get in</span>
+      </button>
     </div>
   </section>
 
   <!-- All Cameras: 3 Follow Cameras + 7 Ann Arbor Vantage Cameras + Auto-Director Drone -->
   <div id="camera-popover" class="popover" popover data-side="above" data-anchor="hud-cluster" data-align="hud-cluster" aria-label="Multiple Camera Angles">
     <div class="pop-title">Follow</div>
-    <button id="cam-chase" class="pop-item cam-btn active" data-camera="chase" type="button"><span class="pop-name">3rd-Person Chase</span><kbd data-key="Digit5">5</kbd></button>
-    <button id="cam-action" class="pop-item cam-btn" data-camera="action" type="button"><span class="pop-name">Low-Angle Action</span><kbd data-key="Digit6">6</kbd></button>
-    <button id="cam-pov" class="pop-item cam-btn" data-camera="pov" type="button"><span class="pop-name">First-Person / Cockpit</span><kbd data-key="Digit7">7</kbd></button>
+    <button id="cam-chase" class="pop-item cam-btn active" data-camera="chase" type="button"><span class="pop-name">3rd-Person Chase</span><kbd data-key="Digit6">6</kbd></button>
+    <button id="cam-action" class="pop-item cam-btn" data-camera="action" type="button"><span class="pop-name">Low-Angle Action</span><kbd data-key="Digit7">7</kbd></button>
+    <button id="cam-pov" class="pop-item cam-btn" data-camera="pov" type="button"><span class="pop-name">First-Person / Cockpit</span><kbd data-key="Digit8">8</kbd></button>
     <div class="pop-title">Scenic</div>
     <button id="cam-diag" class="pop-item cam-btn" data-camera="diag" type="button"><span class="pop-name">The Diag</span></button>
-    <button id="cam-mainStreet" class="pop-item cam-btn" data-camera="mainStreet" type="button"><span class="pop-name">Main Street</span><kbd data-key="Digit8">8</kbd></button>
-    <button id="cam-stateLiberty" class="pop-item cam-btn" data-camera="stateLiberty" type="button"><span class="pop-name">State &amp; Liberty</span><kbd data-key="Digit9">9</kbd></button>
-    <button id="cam-burtonTower" class="pop-item cam-btn" data-camera="burtonTower" type="button"><span class="pop-name">Burton Tower &amp; Ingalls Mall</span><kbd data-key="Digit0">0</kbd></button>
+    <button id="cam-mainStreet" class="pop-item cam-btn" data-camera="mainStreet" type="button"><span class="pop-name">Main Street</span><kbd data-key="Digit9">9</kbd></button>
+    <button id="cam-stateLiberty" class="pop-item cam-btn" data-camera="stateLiberty" type="button"><span class="pop-name">State &amp; Liberty</span><kbd data-key="Digit0">0</kbd></button>
+    <button id="cam-burtonTower" class="pop-item cam-btn" data-camera="burtonTower" type="button"><span class="pop-name">Burton Tower &amp; Ingalls Mall</span></button>
     <button id="cam-burtonTop" class="pop-item cam-btn" data-camera="burtonTop" type="button"><span class="pop-name">Atop Burton Tower</span></button>
     <button id="cam-bigHouse" class="pop-item cam-btn" data-camera="bigHouse" type="button"><span class="pop-name">The Big House</span></button>
     <button id="cam-arbRiver" class="pop-item cam-btn" data-camera="arbRiver" type="button"><span class="pop-name">Arb &amp; Huron River</span></button>
@@ -340,16 +347,16 @@
   </section>
 
 
-<div id="lamp-credit">Based on <a href="https://github.com/mrdoob/slop-newyork" target="_blank" rel="noopener">Slop New York</a> by Mr.doob · <a href="https://lamp.dev/?repo=https://github.com/mrubens/go-to-ann-arbor&amp;commit=d185760fa7bf1bfea2f77a5bbfd13819ebd6f754&amp;from=page" target="_blank" rel="noopener">Open in Lamp</a> · <a href="#" id="lamp-remix-open">Remix…</a></div>
+<div id="lamp-credit">Based on <a href="https://github.com/mrdoob/slop-newyork" target="_blank" rel="noopener">Slop New York</a> by Mr.doob · <a href="https://lamp.dev/?repo=https://github.com/mrubens/go-to-ann-arbor&amp;commit=2ef39aef4a2feb95f99e785b3c0e55bdc22bbba9&amp;from=page" target="_blank" rel="noopener">Open in Lamp</a> · <a href="#" id="lamp-remix-open">Remix…</a></div>
 <div id="lamp-remix" hidden>
   <div class="lamp-remix-head">Make Go To Ann Arbor yours<button type="button" id="lamp-remix-close" aria-label="Close">×</button></div>
   <p>Say what you'd change. Lamp makes the change and keeps your data.</p>
-  <button type="button" class="lamp-remix-pick">Make it rain and snow around town</button><button type="button" class="lamp-remix-pick">Let me drop a pin and return</button><button type="button" class="lamp-remix-pick">Add a Football Saturday crowd at the Big House</button>
+  <button type="button" class="lamp-remix-pick">Add snow and fall leaves by season</button><button type="button" class="lamp-remix-pick">Let me drop pins on favorite spots</button><button type="button" class="lamp-remix-pick">Make game days fill the Big House with fans</button>
   <textarea id="lamp-remix-ask" rows="3" placeholder="Or say it your way"></textarea>
   <button type="button" id="lamp-remix-go" disabled>Continue with Lamp</button>
   <p class="lamp-remix-note">Opens lamp.dev with your request. Lamp is a free Mac app; it opens a copy of Go To Ann Arbor with your request ready to send.</p>
 </div>
-<script type="application/json" id="lamp-remix-target">{"link":null,"origin":{"commit":"d185760fa7bf1bfea2f77a5bbfd13819ebd6f754","repo":"https:\/\/github.com\/mrubens\/go-to-ann-arbor"},"request":"Make an app like Go To Ann Arbor: Explore Ann Arbor, Michigan in 3D on foot, by car, by bike or by helicopter.\n\nThen: {ask}"}</script>
+<script type="application/json" id="lamp-remix-target">{"link":null,"origin":{"commit":"2ef39aef4a2feb95f99e785b3c0e55bdc22bbba9","repo":"https:\/\/github.com\/mrubens\/go-to-ann-arbor"},"request":"Make an app like Go To Ann Arbor: Explore Ann Arbor, Michigan in 3D on foot, by car, by bike or by helicopter.\n\nThen: {ask}"}</script>
 <script>
 (function(){var o=document.getElementById('lamp-remix-open'),p=document.getElementById('lamp-remix'),a=document.getElementById('lamp-remix-ask'),g=document.getElementById('lamp-remix-go');
 if(!o||!p||!a||!g)return;var t=JSON.parse(document.getElementById('lamp-remix-target').textContent||'{}');

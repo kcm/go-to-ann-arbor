@@ -389,6 +389,12 @@ class CityAudioSystem {
     this.emit('trainhorn', { id: 'train', x: at.x, y: at.y + 4, z: at.z, seed: 7 }, { intensity: 1, priority: true });
   }
 
+  // One sound where the player is: a paddle's splash or a car door (main.js)
+  cue(kind, at, intensity = 1) {
+    if (!this.ready || !this.enabled || this.context?.state !== 'running' || document.hidden) return;
+    this.emit(kind, { id: kind, x: at.x, y: at.y + 0.3, z: at.z, seed: ++this.collisionSequence }, { intensity, priority: true });
+  }
+
   honk(entity) {
     if (!this.ready || !this.enabled || this.context?.state !== 'running' || entity?.type !== 'car') return;
     const now = this.context.currentTime;

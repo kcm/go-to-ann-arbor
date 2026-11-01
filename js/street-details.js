@@ -199,7 +199,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
     const key = Math.floor(x / POLE_CELL) + ',' + Math.floor(z / POLE_CELL);
     let cell = poleCells.get(key);
     if (!cell) poleCells.set(key, cell = []);
-    cell.push({ x, z });
+    cell.push({ x, z, width });
     // Poles stand on curbs: pedestrians avoid them, but they must not narrow the inferred road gaps.
     addFootprint(x, z, width, width, true);
   }
@@ -1310,6 +1310,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
 
   function update(camera) {
     if (!camera) return;
+    treeField.update(camera.position);
     const glow = cityUniforms.uInteriorGlow.value;
     // Increase streetlight intensity toward dusk.
     const lampScale = Math.min(1.25, Math.max(0.0, (glow - 0.36) * 1.15));
@@ -1369,7 +1370,11 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   }
 
   scene.add(group);
-  return { group, footprints, signalClock, signalIntersections, audioSignals, update };
+  // Tree trunks and lamp posts, solid to the player: { x, z, r }
+  const obstacles = [];
+  for (const t of treeField.sites) obstacles.push({ x: t.x, z: t.z, r: 0.22 });
+  for (const cell of poleCells.values()) for (const p of cell) obstacles.push({ x: p.x, z: p.z, r: Math.min(0.2, p.width * 0.4) });
+  return { group, footprints, signalClock, signalIntersections, audioSignals, treeField, obstacles, update };
 }
 
 export { buildStreetDetails, createTrafficSignalLensMaterial };

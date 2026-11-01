@@ -8,7 +8,7 @@ The wish itself, to open in [Lamp](https://lamp.dev) and change, is on the [main
 
 ## Credits
 
-- Based on [Slop New York](https://github.com/mrdoob/slop-newyork) by Mr.doob, MIT, at commit `13dd142b480b` (license: `LICENSE-slop-newyork`)
+- Based on [Slop New York](https://github.com/mrdoob/slop-newyork) by Mr.doob, MIT, at commit `e35c06c0d896` (license: `LICENSE-slop-newyork`)
 - Uses [Map data](https://www.openstreetmap.org/copyright) by OpenStreetMap contributors, ODbL-1.0
 - Uses [NYC Open Data](https://opendata.cityofnewyork.us/overview/#termsofuse) by City of New York, LicenseRef-NYC-Open-Data
 - Uses [Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) by Mapzen, USGS, LicenseRef-USGS-Public-Domain

@@ -8,6 +8,11 @@ function axis(value) {
   return Number.isFinite(value) ? Math.max(-1, Math.min(1, value)) : 0;
 }
 
+function steeringAxis(value) {
+  const v = axis(value);
+  return Math.sign(v) * Math.max(0, (Math.abs(v) - DEAD_ZONE) / (1 - DEAD_ZONE));
+}
+
 function stick(pad, offset) {
   const x = axis(pad.axes?.[offset]), y = axis(pad.axes?.[offset + 1]);
   const distance = Math.hypot(x, y);
@@ -131,7 +136,7 @@ class GamepadControls {
     // Capture edges before callbacks: changing mode or opening the map may synchronously call reset().
     const toggleMap = edge(9), closeMap = edge(1);
     const cycleMode = Number(Boolean(edge(5))) - Number(Boolean(edge(4)));
-    const cycleCamera = edge(3), recenter = edge(11);
+    const cycleCamera = edge(3), recenter = edge(11), getInOut = edge(2);
     this.previousButtons = pressed;
 
     const target = document.activeElement;
@@ -158,16 +163,20 @@ class GamepadControls {
     }
     if (cycleMode) this.callbacks.onCycleMode?.(cycleMode);
     if (revision !== this.revision) return;
+    if (getInOut) this.callbacks.onGetInOut?.();
+    if (revision !== this.revision) return;
     if (cycleCamera) this.callbacks.onCycleCamera?.(1);
     if (revision !== this.revision) return;
     if (recenter) this.camera.resetOrbit();
 
-    const movement = stick(pad, 0), look = stick(pad, 2);
     const mode = this.controller.activeMode;
+    const driving = mode === 'car' || mode === 'cyclist';
+    const movement = driving ? { x: steeringAxis(pad.axes?.[0]), y: 0 } : stick(pad, 0);
+    const look = stick(pad, 2);
     let drive = -movement.y;
     let vertical = 0;
-    if (mode === 'car' || mode === 'cyclist') {
-      drive = Math.max(0, drive, buttonValue(pad, 7)) - Math.max(0, -drive, buttonValue(pad, 6));
+    if (driving) {
+      drive = buttonValue(pad, 7) - buttonValue(pad, 6);
     } else if (mode === 'helicopter') {
       vertical = buttonValue(pad, 7) - buttonValue(pad, 6);
     }

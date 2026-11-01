@@ -14,6 +14,7 @@ import {
   buildCarSidePatch,
   buildSteerableWheelGeo,
   carTipZ,
+  createCarWheelMaterial,
   createLoftedCarMaterial
 } from './cars.js';
 import {
@@ -22,10 +23,10 @@ import {
   buildHelicopterTailRotorGeometry,
   createLoftedHelicopterMaterial
 } from './helicopter.js';
-import { PersonCrowd, PersonRig } from './pedestrians.js';
+import { PersonCrowd, PersonRig, PEDESTRIAN_DIVE_DURATION } from './pedestrians.js';
 import { HEADLIGHTS, createVehicleHeadlight, placeVehicleHeadlight } from './vehicle-lights.js';
 import { bryantParkLawn } from './landmarks.js';
-import { groundHeight, groundTilt, stadiumGround } from './terrain.js';
+import { groundHeight, groundTilt, nearestWater, riverDepth, riverFlow, stadiumGround, waterLevel } from './terrain.js';
 import { polygonContact, polygonContains } from './building-collision.js';
 import { bowlSurface } from './stadium-shape.js';
 import { hot } from '../lamp-game.js';
@@ -34,6 +35,12 @@ import { hot } from '../lamp-game.js';
 
 // Spawn on Main St in downtown Ann Arbor, between William and Liberty, facing north up Main
 const SPAWN_Z = 100;
+// The kayak sets out on Argo Pond, by the canoe livery, and the river carries it on down towards Gallup Park
+const KAYAK_LAUNCH = { x: 210, z: -1150 };
+const KAYAK_CURRENT = 1.1; // m/s, out in the middle
+// The player's own car: a black Forester with GO BLU plates
+const OWN_CAR = { kind: 'forester', hex: 0x16181b, style: 0 };
+const isOwnCar = (look) => look.kind === OWN_CAR.kind && look.hex === OWN_CAR.hex;
 const groundCollider = { type: 'ground' };
 // The skids' ends and middle, [across, along] in metres from the helicopter's middle
 const HELI_SKIDS = [[0, 0], [-1.1, -1.8], [1.1, -1.8], [-1.1, 1.8], [1.1, 1.8]];
@@ -70,6 +77,9 @@ function driveSpeed(speed, throttle, dt, drive) {
 
 // Walking surface for the player's pedestrian (its rig samples it around its feet)
 const personGround = (controllers, x, z) => controllers.getGroundHeight(x, z, 'person');
+const RIDER_THROW_SPEED = 5.5;
+const DIVE_GET_UP = 1.15; // where a dive's prone pause begins: a fallen body gets up from there
+const hash01 = (x) => { const v = Math.sin(x * 127.1 + 311.7) * 43758.5453; return v - Math.floor(v); };
 
 function collisionBody(mode, radius, heading, margin = 0) {
   const car = mode === 'car';
@@ -195,6 +205,7 @@ class ThirdPersonControllerManager {
     this.scene = scene;
     this.colliders = colliders;
     this._colliderCells = null; // built on first use, see nearColliders()
+    this.riverScale = 1; // how fast the Huron runs against its usual flow, from the USGS gauge (river-gauge.js)
     this.activeMode = 'car'; // 'person' | 'car' | 'cyclist' | 'helicopter'
 
     this.keys = {
@@ -210,8 +221,10 @@ class ThirdPersonControllerManager {
       person: this.createPersonEntity(),
       car: this.createCarEntity(),
       cyclist: this.createCyclistEntity(),
-      helicopter: this.createHelicopterEntity()
+      helicopter: this.createHelicopterEntity(),
+      kayak: this.createKayakEntity()
     };
+    this.carLook = { ...OWN_CAR };
 
     Object.values(this.entities).forEach((ent) => {
       if (ent.mesh) {
@@ -331,7 +344,23 @@ class ThirdPersonControllerManager {
 
   setMode(mode) {
     if (!this.entities[mode]) return;
+    const person = this.entities.person;
+    // On foot from inside something: out beside it
+    const ridden = mode === 'person' && person.riding ? this.entities[person.riding] : null;
+    person.riding = mode === 'person' ? null : person.riding;
     this.activeMode = mode;
+    if (ridden) {
+      ridden.leftEmpty = true;
+      this.placePersonBeside(ridden);
+    }
+    const active = this.entities[mode];
+    if (active.mesh) active.mesh.visible = true;
+    if (active.helmet) active.helmet.visible = true;
+    if (mode === 'person') active._charHidden = false;
+    else if (mode === 'cyclist') {
+      active._riderHidden = false;
+      active._posedX = NaN;
+    } else if (mode === 'kayak') active._paddlerHidden = false;
     const car = this.entities.car;
     if (mode !== 'car' && car?.carState) car.carState.value.x = car.carState.value.w = 0;
   }
@@ -344,6 +373,18 @@ class ThirdPersonControllerManager {
     const ent = this.getActiveEntity();
     this.resetInput();
     if (!Number.isFinite(heading)) heading = ent.heading;
+    if (this.activeMode === 'kayak') {
+      const water = Number.isFinite(x) && Number.isFinite(z) ? nearestWater(x, z, 2500) : null;
+      if (water) {
+        ent.position.set(water.x, waterLevel(water.x, water.z) ?? ent.position.y, water.z);
+        ent.heading = this.downstreamHeading(water.x, water.z, heading);
+      }
+      ent.speed = ent.driftX = ent.driftZ = ent.turnVel = 0;
+      ent._paddlerHidden = false;
+      ent.mesh.position.copy(ent.position);
+      ent.mesh.rotation.y = ent.heading;
+      return { x: ent.position.x, z: ent.position.z };
+    }
     const heli = this.activeMode === 'helicopter';
     const altitude = heli ? Math.max(groundHeight(x, z) + 0.25, Math.min(380, savedAltitude ?? Math.max(92, ent.position.y))) : 0;
     const destination = this.findTeleportPosition(x, z, heading, altitude);
@@ -356,6 +397,10 @@ class ThirdPersonControllerManager {
     ent.speed = 0;
     if (this.activeMode === 'person') {
       ent.verticalVel = 0;
+      ent._charHidden = false;
+      if (ent.mesh) ent.mesh.visible = true;
+      ent.fallen = null;
+      ent.rig.ragdolling = false;
       ent.rig.reset(ent.position.x, ent.position.z, ent.heading, personGround, this);
       ent.crowd.begin();
       ent.crowd.add(ent.rig, 0);
@@ -372,6 +417,9 @@ class ThirdPersonControllerManager {
       if (ent.carState) ent.carState.value.x = ent.carState.value.w = 0;
     } else if (this.activeMode === 'cyclist') {
       ent.leanAngle = ent.leanPivot.rotation.z = 0;
+      ent._riderHidden = false;
+      ent._posedX = NaN;
+      if (ent.helmet) ent.helmet.visible = true;
     } else if (heli) {
       ent.verticalSpeed = ent.pitchAngle = ent.rollAngle = 0;
       ent.tiltPivot.rotation.x = ent.tiltPivot.rotation.z = 0;
@@ -394,7 +442,7 @@ class ThirdPersonControllerManager {
     const margin = heli ? 6000 : 0;
     const entity = this.getActiveEntity();
     // Conservative body cylinders, including the taxi's corners, bicycle wheels and helicopter tail/rotor.
-    const body = { person: [0.48, 1.9], car: [2.4, 1.9], cyclist: [1.0, 1.9], helicopter: [6.2, 3.2] };
+    const body = { person: [0.48, 1.9], car: [2.4, 1.9], cyclist: [1.0, 1.9], helicopter: [6.2, 3.2], kayak: [1.9, 1.2] };
     const others = Object.values(this.entities).filter(e => e !== entity).map(e => ({
       x: e.position.x, z: e.position.z, radius: body[e.type][0],
       bottom: e.position.y - (e.type === 'helicopter' ? 0.7 : 0), top: e.position.y + body[e.type][1]
@@ -485,15 +533,15 @@ class ThirdPersonControllerManager {
   // =========================================================================
   // 2. CAR (3D LOFTED BLACK COMPACT SUV, A SUBARU FORESTER'S LINES: ROOF RAILS, BLACK CLADDING)
   // =========================================================================
-  createCarEntity() {
-    const root = new THREE.Group();
+  createCarEntity(look = OWN_CAR, root = new THREE.Group(), reuseLights = null) {
     root.name = 'PlayerCar';
+    const own = isOwnCar(look);
 
     const chassisPivot = new THREE.Group();
     root.add(chassisPivot);
 
-    const spec = BODY_SPECS.forester;
-    const taxiLoftMat = createLoftedCarMaterial(spec, 0x16181b);
+    const spec = BODY_SPECS[look.kind] || BODY_SPECS.forester;
+    const taxiLoftMat = createLoftedCarMaterial(spec, look.hex);
 
     // 1. 3D Lofted SUV Body + Curved Windscreens + Crowned Roof + Side Mirrors + Roof Rails
     const carBodyGeo = buildCarGeometry(spec, false);
@@ -503,9 +551,9 @@ class ThirdPersonControllerManager {
     chassisPivot.add(carBodyMesh);
 
     // 3. Michigan license plates on the raked bumpers, tilted to follow the fascias
-    const nyPlateTex = createGoBluePlateTexture();
-    const nyPlateMat = new THREE.MeshStandardNodeMaterial({ map: nyPlateTex, roughness: 0.28 });
-    for (const front of [true, false]) {
+    const nyPlateTex = own ? (this._goBluPlate ??= createGoBluePlateTexture()) : null;
+    const nyPlateMat = own ? new THREE.MeshStandardNodeMaterial({ map: nyPlateTex, roughness: 0.28 }) : null;
+    for (const front of own ? [true, false] : []) {
       const y = spec.plates[front ? 0 : 1];
       const plate = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.14, 0.008), nyPlateMat);
       plate.position.set(0, y, carTipZ(spec, y, front) + (front ? 0.003 : -0.003));
@@ -519,6 +567,7 @@ class ThirdPersonControllerManager {
     // 4. Steerable & Spinning 3D LatheGeometry Tyres + Recessed 5-Spoke Alloy Wheels
     const leftWheelGeo = buildSteerableWheelGeo(spec, -1);
     const rightWheelGeo = buildSteerableWheelGeo(spec, 1);
+    const taxiWheelMat = createCarWheelMaterial({ wheelRadius: spec.wheelRadius });
 
     const wheels = [];
     const wheelCoords = [
@@ -530,7 +579,7 @@ class ThirdPersonControllerManager {
     for (const wc of wheelCoords) {
       const steerPivot = new THREE.Group();
       steerPivot.position.set(wc.side * spec.wheelX, spec.wheelRadius, wc.z);
-      const tire = new THREE.Mesh(wc.side < 0 ? leftWheelGeo : rightWheelGeo, taxiLoftMat);
+      const tire = new THREE.Mesh(wc.side < 0 ? leftWheelGeo : rightWheelGeo, taxiWheelMat);
       tire.castShadow = true;
       tire.receiveShadow = true;
       steerPivot.add(tire);
@@ -546,19 +595,22 @@ class ThirdPersonControllerManager {
     carShadow.renderOrder = 998;
     root.add(carShadow);
 
+    // a car taken from a parking spot keeps the lights the player's car had (so no light is added to the scene)
     const headLights = [];
     for (const side of [-1, 1]) {
-      const spot = createVehicleHeadlight();
+      const old = reuseLights?.[side < 0 ? 0 : 1];
+      const spot = old || createVehicleHeadlight();
       placeVehicleHeadlight(spot, spec, side);
-      chassisPivot.add(spot, spot.target);
+      if (!old || old.parent) chassisPivot.add(spot, spot.target);
       headLights.push(spot);
     }
 
-    this.scene.add(root);
+    if (!root.parent) this.scene.add(root);
 
+    const kindName = { sedan: 'Sedan', suv: 'SUV', minivan: 'Minivan', pickup: 'Pickup', van: 'Van', forester: 'Forester' };
     return {
       type: 'car',
-      label: 'Your Car',
+      label: own ? 'Your Car' : `Borrowed ${kindName[look.kind] || 'Car'}`,
       mesh: root,
       chassisPivot,
       carState,
@@ -829,6 +881,223 @@ class ThirdPersonControllerManager {
     };
   }
 
+  // The player's car becomes another (a parked car they got into): its body, paint and lights made again on the same root
+  restyleCar(look) {
+    const car = this.entities.car;
+    if (!look || !BODY_SPECS[look.kind]) return;
+    const root = car.mesh;
+    const lights = car.headLights;
+    for (const spot of lights || []) { spot.removeFromParent(); spot.target.removeFromParent(); }
+    for (const child of [...root.children]) root.remove(child);
+    const fresh = this.createCarEntity(look, root, lights);
+    const { position, heading } = car;
+    Object.assign(car, fresh, { position, heading, prevX: position.x, prevZ: position.z });
+    root.traverse((child) => {
+      if (child.isMesh && !child.material?.transparent && !child.material?.isMeshBasicNodeMaterial) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+    this.carLook = { kind: look.kind, hex: look.hex, style: look.style ?? 0 };
+    root.position.copy(position);
+    root.rotation.y = heading;
+    root.updateMatrixWorld(true);
+  }
+
+  // The car where it is now, standing still
+  stopCar(ent = this.entities.car) {
+    ent.prevX = ent.position.x;
+    ent.prevZ = ent.position.z;
+    ent.speed = ent.vx = ent.vz = ent.angularVel = ent.steerAngle = 0;
+    ent.pitchVel = ent.rollVel = ent.heaveY = ent.heaveVel = 0;
+    ent.chassisPivot.rotation.x = ent.chassisPivot.rotation.z = 0;
+    ent.chassisPivot.position.y = 0;
+    ent.lastCollisionSpark = null;
+    for (const wheel of ent.wheels) if (wheel.isFront) wheel.steerPivot.rotation.y = 0;
+    if (ent.carState) ent.carState.value.x = ent.carState.value.w = 0;
+  }
+
+  // =========================================================================
+  // 5. KAYAK (A RED SIT-IN TOURING KAYAK, ITS PADDLER AND A TWO-BLADED PADDLE)
+  // =========================================================================
+  createKayakEntity() {
+    const root = new THREE.Group();
+    root.name = 'PlayerKayak';
+    const tiltPivot = new THREE.Group();
+    root.add(tiltPivot);
+
+    const hullMat = createCarPaintMaterial(0xc8372a);
+    const deckMat = createCarPaintMaterial(0xe0533a);
+    const darkMat = new THREE.MeshStandardNodeMaterial({ color: 0x15171a, roughness: 0.75 });
+    const shaftMat = new THREE.MeshStandardNodeMaterial({ color: 0x2a2d33, roughness: 0.4, metalness: 0.5 });
+    const bladeMat = new THREE.MeshStandardNodeMaterial({ color: 0xf2c230, roughness: 0.45 });
+
+    // The hull and deck: halves of a long ellipsoid, narrowed to points at the bow and stern and rising a little there
+    const L = 1.85, B = 0.36;
+    const shape = (geo, height) => {
+      const pos = geo.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        const t = Math.min(1, Math.abs(pos.getZ(i)));
+        pos.setXYZ(i, pos.getX(i) * B * (1 - 0.55 * t * t), pos.getY(i) * height * (1 - 0.25 * t * t) + 0.1 + 0.09 * t ** 3, pos.getZ(i) * L);
+      }
+      geo.computeVertexNormals();
+      return geo;
+    };
+    const hull = new THREE.Mesh(shape(new THREE.SphereGeometry(1, 28, 8, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), 0.2), hullMat);
+    const deck = new THREE.Mesh(shape(new THREE.SphereGeometry(1, 28, 6, 0, Math.PI * 2, 0, Math.PI / 2), 0.12), deckMat);
+    const cockpit = new THREE.Mesh(new THREE.CircleGeometry(1, 24).rotateX(-Math.PI / 2).scale(0.23, 1, 0.37), darkMat);
+    cockpit.position.set(0, 0.232, -0.12);
+    const coaming = new THREE.Mesh(new THREE.TorusGeometry(1, 0.08, 6, 28).rotateX(Math.PI / 2).scale(0.24, 0.3, 0.38), darkMat);
+    coaming.position.set(0, 0.236, -0.12);
+    tiltPivot.add(hull, deck, cockpit, coaming);
+
+    // The paddle: a shaft across the paddler's lap with a blade at each end, turned about by the stroke (see updateKayak)
+    const paddle = new THREE.Group();
+    paddle.position.set(0, 0.58, 0.16);
+    paddle.add(new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 2.1, 8).rotateZ(Math.PI / 2), shaftMat));
+    for (const end of [1, -1]) {
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.16, 0.012), bladeMat);
+      blade.position.x = end * 1.02;
+      paddle.add(blade);
+    }
+    tiltPivot.add(paddle);
+
+    // The paddler (see pedestrians.js), sitting in the cockpit with their hands on the shaft
+    const paddlerCrowd = new PersonCrowd(1, { farDistance: Infinity });
+    paddlerCrowd.meshes.forEach((m) => this.scene.add(m));
+    const paddlerRig = new PersonRig({ seed: 31.4, scale: 1.0, girth: 1.0, hair: 0.3 });
+
+    const kayakShadowGeo = new THREE.PlaneGeometry(0.9, 3.9);
+    kayakShadowGeo.rotateX(-Math.PI * 0.5);
+    const kayakShadow = new THREE.Mesh(kayakShadowGeo, createContactShadowMaterial());
+    kayakShadow.position.set(0, 0.015, 0);
+    kayakShadow.renderOrder = 998;
+    root.add(kayakShadow);
+
+    this.scene.add(root);
+
+    const launch = nearestWater(KAYAK_LAUNCH.x, KAYAK_LAUNCH.z, 400) || KAYAK_LAUNCH;
+    const y = waterLevel(launch.x, launch.z) ?? groundHeight(launch.x, launch.z);
+    return {
+      type: 'kayak',
+      label: 'Kayak',
+      mesh: root,
+      tiltPivot,
+      paddle,
+      paddlerCrowd,
+      paddlerRig,
+      seat: new THREE.Vector3(0, 0.02, -0.14),
+      hands: [new THREE.Vector3(), new THREE.Vector3()],
+      twist: 0,
+      position: new THREE.Vector3(launch.x, y, launch.z),
+      heading: this.downstreamHeading(launch.x, launch.z, Math.PI / 2),
+      speed: 0,
+      driftX: 0,
+      driftZ: 0,
+      turnVel: 0,
+      leftEmpty: true, // it waits at the livery until someone gets in
+      stroke: 0,
+      strokeAmp: 0,
+      strokes: 0,
+      cameraTargetOffset: new THREE.Vector3(0, 0.85, 0),
+      chaseDistance: 5.6,
+      chaseHeight: 1.75
+    };
+  }
+
+  // The way downstream at (x, z) as a heading, or `fallback` where the water doesn't run
+  downstreamHeading(x, z, fallback = 0) {
+    const flow = this._flow ??= { x: 0, z: 0 };
+    return riverFlow(x, z, flow) ? Math.atan2(flow.x, flow.z) : fallback;
+  }
+
+  // On foot beside what the player was in: the car's driver's side (or the other, or behind or in front of it), the
+  // bike's or the helicopter's side, the nearest dry bank to the kayak
+  placePersonBeside(v) {
+    const p = this.entities.person;
+    const shape = collisionBody('person', 0.48, 0, 0.05);
+    const free = (x, z) => {
+      if (riverDepth(x, z) > 0.02) return false;
+      const y = this.getGroundHeight(x, z, 'person');
+      for (const c of this.nearColliders(x, z, 3)) if (buildingContact(c, x, y, z, shape)) return false;
+      return true;
+    };
+    const sn = Math.sin(v.heading), cs = Math.cos(v.heading);
+    let spot = null;
+    if (v.type === 'kayak') {
+      for (let r = 1.5; r <= 60 && !spot; r += 1.5) {
+        for (let i = 0; i < 24; i++) {
+          const a = v.heading + Math.PI / 2 + i * Math.PI / 12;
+          const x = v.position.x + Math.sin(a) * r, z = v.position.z + Math.cos(a) * r;
+          if (free(x, z)) { spot = { x, z }; break; }
+        }
+      }
+    } else {
+      const side = v.type === 'car' ? 1.75 : v.type === 'helicopter' ? 2.4 : 0.8;
+      const end = v.type === 'car' ? 3.4 : v.type === 'helicopter' ? 7.5 : 1.6;
+      for (const [s, f] of [[side, 0.4], [-side, 0.4], [0, -end], [0, end]]) {
+        const x = v.position.x + cs * s + sn * f, z = v.position.z - sn * s + cs * f;
+        if (free(x, z)) { spot = { x, z }; break; }
+      }
+    }
+    const heading = v.type === 'kayak' && spot ? Math.atan2(spot.x - v.position.x, spot.z - v.position.z) : v.heading;
+    if (!spot) {
+      this.teleportActiveTo(v.position.x, v.position.z, heading);
+      return;
+    }
+    p.position.set(spot.x, this.getGroundHeight(spot.x, spot.z, 'person'), spot.z);
+    p.heading = heading;
+    p.speed = 0;
+    p.verticalVel = 0;
+    p._charHidden = false;
+    if (p.mesh) p.mesh.visible = true;
+    p.rig.reset(p.position.x, p.position.z, p.heading, personGround, this);
+    p.crowd.begin();
+    p.crowd.add(p.rig, 0);
+    p.crowd.end();
+    p.mesh.position.copy(p.position);
+    p.mesh.rotation.y = p.heading;
+  }
+
+  // F: out of whatever the player is in, or into the nearest thing to get into (their car, the bike, the kayak, the
+  // helicopter, a parked car (`parked` finds one) or one going by in `traffic`). Says which mode to switch to, and the parked car to take; null
+  // when there's nothing near to get into (or the helicopter is still in the air).
+  enterOrExit(parked = null, traffic = null) {
+    const mode = this.activeMode;
+    const p = this.entities.person;
+    if (p.fallen && mode === 'person') return null;
+    if (mode !== 'person') {
+      const v = this.getActiveEntity();
+      if (mode === 'helicopter' && v.position.y - this.helicopterFloor(v, v.position.y) > 0.8) return null;
+      v.speed = 0;
+      if (mode === 'car') this.stopCar(v);
+      if (mode === 'helicopter') v.verticalSpeed = 0;
+      if (mode === 'kayak') v.driftX = v.driftZ = v.turnVel = 0;
+      p.riding = mode;
+      return { mode: 'person' };
+    }
+    let best = null, score = 1;
+    const consider = (m, x, z, reach, car = null) => {
+      const d = Math.hypot(x - p.position.x, z - p.position.z) / reach;
+      if (d < score) { score = d; best = { mode: m, parked: car }; }
+    };
+    for (const [m, reach] of [['car', 4.2], ['cyclist', 2.4], ['kayak', 7], ['helicopter', 7.5]]) {
+      const e = this.entities[m];
+      if (m === 'helicopter' && e.position.y - this.helicopterFloor(e, e.position.y) > 0.8) continue;
+      consider(m, e.position.x, e.position.z, reach);
+    }
+    const near = parked?.nearest(p.position.x, p.position.z, 4.2);
+    if (near) consider('car', near.x, near.z, 4.2, near);
+    // a car going by in traffic (traffic.js), within reach
+    const passing = traffic?.nearestCar(p.position.x, p.position.z, 5);
+    if (passing != null && passing / 5 < score) { score = passing / 5; best = { mode: 'car', moving: true }; }
+    if (best) {
+      p.riding = best.mode;
+      this.entities[best.mode].leftEmpty = false;
+    }
+    return best;
+  }
+
   // On a raised curb island (city-config.js BLOCKS: the real blocks, malls & plazas), not in a park
   isPointOnSidewalk(x, z) {
     const b = blockAt(x, z);
@@ -851,6 +1120,7 @@ class ThirdPersonControllerManager {
     if (mode === 'person') {
       return ground + (this.isPointOnSidewalk(x, z) ? ISLAND_BOUNDS.sidewalkHeight : 0.0);
     }
+    if (mode === 'kayak') return waterLevel(x, z) ?? ground;
     return ground;
   }
 
@@ -923,12 +1193,17 @@ class ThirdPersonControllerManager {
     for (let i = 0; i < near.length; i++) {
       const c = near[i];
       // the helicopter flies down into the stadium's bowl, and sits on the roof under its skids
-      if (heli && (isStadium(c) || standing?.has(c))) continue;
+      if (heli && (isStadium(c) || c.thin || standing?.has(c))) continue;
       if (buildingContact(c, pos.x, pos.y, pos.z, body, contact)) {
         const { nx, nz, depth } = contact;
         pos.x += nx * depth;
         pos.z += nz * depth;
 
+        // a bike into a wall, a tree or a pole faster than a jog throws its rider
+        if (entity?.type === 'cyclist'
+          && -(Math.sin(entity.heading) * entity.speed * nx + Math.cos(entity.heading) * entity.speed * nz) > RIDER_THROW_SPEED) {
+          this._riderThrow = Math.max(this._riderThrow || 0, Math.abs(entity.speed));
+        }
         if (this._collisionListener && entity && entity.type !== 'person') {
           const sin = carEntity ? sinH : Math.sin(entity.heading);
           const cos = carEntity ? cosH : Math.cos(entity.heading);
@@ -986,30 +1261,107 @@ class ThirdPersonControllerManager {
   // Pose the skinned characters once every entity has moved: the pedestrian's rig walks (or runs, turns, jumps) it to
   // where it now is, planting its feet on the ground; the cyclist sits on the bike, hands on the grips, feet on the
   // pedals, helmet on its head
-  poseCharacters(dt) {
+  poseCharacters(dt, focusPos = null) {
+    const focus = focusPos || this.getActiveEntity()?.position;
+    const maxDistSq = 320 * 320;
+
     const p = this.entities.person;
-    const air = p.position.y - this.getGroundHeight(p.position.x, p.position.z, 'person');
-    p.rig.update(dt, p.position.x, p.position.z, p.heading, personGround, this, air > 0.02 ? air : 0);
-    p.crowd.begin();
-    p.crowd.add(p.rig, 0);
-    p.crowd.end();
+    if (p) {
+      const dx = focus ? p.position.x - focus.x : 0;
+      const dz = focus ? p.position.z - focus.z : 0;
+      if (!p.riding && (this.activeMode === 'person' || dx * dx + dz * dz <= maxDistSq)) {
+        p._charHidden = false;
+        if (p.mesh) p.mesh.visible = true;
+        const air = p.position.y - this.getGroundHeight(p.position.x, p.position.z, 'person');
+        if (p.fallen?.getUp >= 0) p.rig.update(dt, p.position.x, p.position.z, p.heading, personGround, this, 0, true, DIVE_GET_UP + p.fallen.getUp);
+        else if (!p.fallen) p.rig.update(dt, p.position.x, p.position.z, p.heading, personGround, this, air > 0.02 ? air : 0);
+        p.crowd.begin();
+        p.crowd.add(p.rig, 0);
+        p.crowd.end();
+      } else if (!p._charHidden) {
+        p.rig.placed = false;
+        p.crowd.begin();
+        p.crowd.end();
+        if (p.crowd.updates > 2) {
+          if (p.mesh) p.mesh.visible = false;
+          p._charHidden = true;
+        }
+      }
+    }
 
     const b = this.entities.cyclist;
-    b.riderRig.ride(b.leanPivot, b.pedalPhase, b.bikeFrame);
-    b.riderCrowd.begin();
-    b.riderCrowd.add(b.riderRig, 0);
-    b.riderCrowd.end();
-    b.helmet.quaternion.copy(b.riderRig.headQuaternion);
-    b.helmet.position.set(0, 0.175, -0.012).applyQuaternion(b.helmet.quaternion).add(b.riderRig.headPosition);
+    if (b) {
+      const dx = focus ? b.position.x - focus.x : 0;
+      const dz = focus ? b.position.z - focus.z : 0;
+      if (this.activeMode === 'cyclist' || (!b.leftEmpty && dx * dx + dz * dz <= maxDistSq)) {
+        if (b.helmet) b.helmet.visible = true;
+        const moved =
+          this.activeMode === 'cyclist' ||
+          b._riderHidden ||
+          b._posedX !== b.position.x ||
+          b._posedY !== b.position.y ||
+          b._posedZ !== b.position.z ||
+          b._posedH !== b.heading ||
+          b._posedLean !== b.leanAngle ||
+          b._posedPedal !== b.pedalPhase;
+        b._riderHidden = false;
+        if (moved) {
+          b.riderRig.ride(b.leanPivot, b.pedalPhase, b.bikeFrame);
+          b.riderCrowd.begin();
+          b.riderCrowd.add(b.riderRig, 0);
+          b.riderCrowd.end();
+          b.helmet.quaternion.copy(b.riderRig.headQuaternion);
+          b.helmet.position.set(0, 0.175, -0.012).applyQuaternion(b.helmet.quaternion).add(b.riderRig.headPosition);
+          b._posedX = b.position.x;
+          b._posedY = b.position.y;
+          b._posedZ = b.position.z;
+          b._posedH = b.heading;
+          b._posedLean = b.leanAngle;
+          b._posedPedal = b.pedalPhase;
+        }
+      } else if (!b._riderHidden) {
+        b.riderCrowd.begin();
+        b.riderCrowd.end();
+        if (b.riderCrowd.updates > 2) {
+          if (b.helmet) b.helmet.visible = false;
+          b._riderHidden = true;
+          b._posedX = NaN;
+        }
+      }
+    }
+
+    const k = this.entities.kayak;
+    if (k) {
+      const dx = focus ? k.position.x - focus.x : 0;
+      const dz = focus ? k.position.z - focus.z : 0;
+      // the paddler is in it only while the player paddles it, or has left it with someone still in it
+      const manned = this.activeMode === 'kayak' || !k.leftEmpty;
+      if (manned && (this.activeMode === 'kayak' || dx * dx + dz * dz <= maxDistSq)) {
+        k._paddlerHidden = false;
+        k.paddlerRig.paddle(k.tiltPivot, k.seat, k.hands, k.twist);
+        k.paddlerCrowd.begin();
+        k.paddlerCrowd.add(k.paddlerRig, 0);
+        k.paddlerCrowd.end();
+      } else if (!k._paddlerHidden) {
+        k.paddlerCrowd.begin();
+        k.paddlerCrowd.end();
+        if (k.paddlerCrowd.updates > 2) k._paddlerHidden = true;
+      }
+    }
   }
 
-  update(dt, elapsed) {
+  update(dt, elapsed, focusPos = null) {
     const heli = this.entities.helicopter;
     heli.mainRotorPivot.rotation.y += dt * 24.0;
     heli.tailRotorPivot.rotation.x += dt * 32.0;
 
     if (this.activeMode === 'person') {
       this.updatePerson(dt, elapsed);
+    } else if (this.entities.person.riding) {
+      // In something: carried along with it, out of sight
+      const p = this.entities.person;
+      p.position.copy(this.entities[p.riding].position);
+      p.speed = 0;
     } else {
       // Keep the sidewalk pedestrian walking naturally when not actively controlled
       const p = this.entities.person;
@@ -1025,9 +1377,13 @@ class ThirdPersonControllerManager {
     if (this.activeMode === 'car') {
       this.updateCar(dt, elapsed);
     } else if (this.activeMode === 'cyclist') {
+      this._riderThrow = 0;
       this.updateCyclist(dt, elapsed);
+      if (this._riderThrow) this.throwRider(this._riderThrow);
     } else if (this.activeMode === 'helicopter') {
       this.updateHelicopter(dt, elapsed);
+    } else if (this.activeMode === 'kayak') {
+      this.updateKayak(dt, elapsed);
     }
 
     for (const key of Object.keys(this.entities)) {
@@ -1058,11 +1414,60 @@ class ThirdPersonControllerManager {
       bike.headLight.intensity = bikeActive ? 115 * beamScale : 0;
     }
 
-    this.poseCharacters(dt);
+    this.poseCharacters(dt, focusPos);
+  }
+
+  // Knocked off the bike or down by a car: the player's body goes limp, flung by (vx, vy, vz), and gets up where it
+  // came to rest (through the push-up of a dive); the controls do nothing meanwhile
+  knockDown(vx, vy, vz, spin = 0, tip = 0) {
+    const p = this.entities.person;
+    if (p.fallen && p.rig.ragdolling) {
+      // a car still pushing the body knocks it on once, not every frame it touches
+      if (p.rig.rag.time - (p.fallen.kick ?? -1) > 0.5) p.rig.kickRagdoll(vx * 0.6, vy * 0.5, vz * 0.6);
+      p.fallen.kick = p.rig.rag.time;
+      return;
+    }
+    if (!p.rig.placed) p.rig.reset(p.position.x, p.position.z, p.heading, personGround, this);
+    p.rig.startRagdoll(vx, vy, vz, spin, tip);
+    p.fallen = { getUp: -1 };
+    p.speed = p.verticalVel = 0;
+    p._charHidden = false;
+    if (p.mesh) p.mesh.visible = true;
+  }
+
+  // Thrown over the handlebars of a bike that hit something hard at `speed` (or off it the way (hx, hz) a car hit
+  // it): the bike stays where it stopped and the player lands on foot
+  throwRider(speed, hx = 0, hz = 0) {
+    const b = this.entities.cyclist, p = this.entities.person;
+    const sn = Math.sin(b.heading), cs = Math.cos(b.heading);
+    p.riding = null;
+    b.leftEmpty = true;
+    p.position.set(b.position.x + sn * 0.2, b.position.y, b.position.z + cs * 0.2);
+    p.heading = b.heading;
+    p.rig.reset(p.position.x, p.position.z, p.heading, personGround, this);
+    this.setMode('person');
+    b.speed = 0;
+    const v = speed * 0.85;
+    if (hx || hz) this.knockDown(sn * v * 0.5 + hx, 2 + speed * 0.15, cs * v * 0.5 + hz, (hash01(speed) - 0.5) * 4, 0.8);
+    else this.knockDown(sn * v, 1.8 + speed * 0.12, cs * v, (hash01(speed) - 0.5) * 2, 1.6 + speed * 0.25);
   }
 
   updatePerson(dt) {
     const p = this.entities.person;
+    if (p.fallen) {
+      if (p.fallen.getUp < 0) {
+        if (p.rig.stepRagdoll(dt, personGround, this, true)) {
+          p.heading = p.rig.yaw = p.rig.ragdollHeading();
+          p.rig.ragdolling = false;
+          p.fallen.getUp = 0;
+        }
+        p.position.x = p.rig.x;
+        p.position.z = p.rig.z;
+      } else if ((p.fallen.getUp += dt) > PEDESTRIAN_DIVE_DURATION - DIVE_GET_UP) p.fallen = null;
+      p.speed = p.verticalVel = 0;
+      p.position.y = this.getGroundHeight(p.position.x, p.position.z, 'person');
+      return;
+    }
     const maxSpeed = 8.2;
     const turnRate = 2.6;
 
@@ -1229,6 +1634,100 @@ class ThirdPersonControllerManager {
     for (const pedal of b.pedals) pedal.rotation.x = -b.pedalPhase;
   }
 
+  // Paddling: forward and back paddle, left and right turn; the river's current carries the kayak downstream, and the
+  // banks stop it (it only goes where the water is open, riverDepth). The paddle sweeps one blade then the other through
+  // the water, and `strokes` counts each blade going in (the splash, main.js).
+  updateKayak(dt, elapsed) {
+    if (dt <= 0) return;
+    const k = this.entities.kayak;
+    const throttle = Number(this.keys.forward || 0) - 0.6 * Number(this.keys.backward || 0);
+    const turn = Number(this.keys.left || 0) - Number(this.keys.right || 0);
+
+    if (throttle) {
+      const target = throttle * 4.4;
+      const rate = 1.7 * dt;
+      k.speed += Math.max(-rate, Math.min(rate, target - k.speed));
+    } else {
+      k.speed *= Math.exp(-0.45 * dt);
+    }
+    const turnTarget = turn * (0.95 + Math.min(1, Math.abs(k.speed) / 3) * 0.45);
+    k.turnVel += (turnTarget - k.turnVel) * Math.min(1, dt * 3.2);
+
+    // the current, strongest out in the middle of the river
+    const flow = this._flow ??= { x: 0, z: 0 };
+    let cx = 0, cz = 0;
+    if (riverFlow(k.position.x, k.position.z, flow)) {
+      const pull = KAYAK_CURRENT * this.riverScale * (0.4 + 0.6 * riverDepth(k.position.x, k.position.z));
+      cx = flow.x * pull;
+      cz = flow.z * pull;
+    }
+    const follow = Math.min(1, dt * 1.2);
+    k.driftX += (cx - k.driftX) * follow;
+    k.driftZ += (cz - k.driftZ) * follow;
+
+    // afloat: the middle, the bow and the stern all over open water
+    const afloat = (x, z, h) => {
+      const sn = Math.sin(h) * 1.55, cs = Math.cos(h) * 1.55;
+      return riverDepth(x, z) > 0.45 && riverDepth(x + sn, z + cs) > 0.2 && riverDepth(x - sn, z - cs) > 0.2;
+    };
+    const x = k.position.x, z = k.position.z;
+    if (!afloat(x, z, k.heading) && riverDepth(x, z) < 0.2) {
+      // somehow ashore: back to the nearest water
+      const water = nearestWater(x, z, 2500);
+      if (water) { k.position.x = water.x; k.position.z = water.z; }
+    }
+    let heading = k.heading + k.turnVel * dt;
+    if (!afloat(k.position.x, k.position.z, heading)) { heading = k.heading; k.turnVel *= 0.3; }
+    k.heading = heading;
+    const vx = Math.sin(heading) * k.speed + k.driftX, vz = Math.cos(heading) * k.speed + k.driftZ;
+    const nx = k.position.x + vx * dt, nz = k.position.z + vz * dt;
+    if (afloat(nx, nz, heading)) {
+      k.position.x = nx; k.position.z = nz;
+    } else if (afloat(nx, k.position.z, heading)) {
+      k.position.x = nx; k.speed *= 1 - Math.min(1, dt * 2); k.driftZ = 0;
+    } else if (afloat(k.position.x, nz, heading)) {
+      k.position.z = nz; k.speed *= 1 - Math.min(1, dt * 2); k.driftX = 0;
+    } else {
+      // nosed into the bank: stop, and ease back out towards deeper water
+      if (Math.abs(k.speed) > 0.8) this.reportCollision(k, groundCollider, 'ground', nx, k.position.y + 0.2, nz, 0, 1, 0, Math.abs(k.speed) * 0.4);
+      k.speed *= 0.3;
+      k.driftX = k.driftZ = 0;
+      const e = 1.5;
+      const gx = riverDepth(k.position.x + e, k.position.z) - riverDepth(k.position.x - e, k.position.z);
+      const gz = riverDepth(k.position.x, k.position.z + e) - riverDepth(k.position.x, k.position.z - e);
+      const gl = Math.hypot(gx, gz);
+      if (gl > 1e-4) {
+        const px = k.position.x + gx / gl * 0.6 * dt, pz = k.position.z + gz / gl * 0.6 * dt;
+        if (riverDepth(px, pz) >= riverDepth(k.position.x, k.position.z)) { k.position.x = px; k.position.z = pz; }
+      }
+    }
+    k.position.y = waterLevel(k.position.x, k.position.z) ?? k.position.y;
+
+    // the stroke: one blade, then the other, at a pace set by how hard the player paddles
+    const effort = Math.min(1, Math.max(Math.abs(throttle), Math.abs(turn)));
+    k.strokeAmp += ((effort > 0.05 ? 1 : 0) - k.strokeAmp) * Math.min(1, dt * 4);
+    const entry = (phase) => Math.floor((phase - 0.15 * Math.PI) / Math.PI);
+    const before = entry(k.stroke);
+    if (effort > 0.05) k.stroke += dt * Math.PI * 2 * 0.75 * (0.6 + 0.4 * effort) * (throttle < 0 ? -1 : 1);
+    if (entry(k.stroke) !== before) {
+      k.strokes++;
+      k.strokeSide = Math.sin(k.stroke) > 0 ? -1 : 1;
+    }
+    const roll = k.strokeAmp * 0.72 * Math.sin(k.stroke);
+    const yaw = k.strokeAmp * 0.55 * Math.cos(k.stroke);
+    k.paddle.rotation.set(0, yaw, roll, 'YZX');
+    const dx = Math.cos(roll) * Math.cos(yaw), dy = Math.sin(roll), dz = -Math.cos(roll) * Math.sin(yaw);
+    const c = k.paddle.position;
+    k.hands[0].set(c.x + dx * 0.34, c.y + dy * 0.34, c.z + dz * 0.34);
+    k.hands[1].set(c.x - dx * 0.34, c.y - dy * 0.34, c.z - dz * 0.34);
+    k.twist = -yaw * 0.6;
+
+    // bobbing on the water, leaning into turns and rocking with the stroke
+    k.tiltPivot.position.y = Math.sin(elapsed * 1.7) * 0.015;
+    k.tiltPivot.rotation.z = -k.turnVel * 0.06 * Math.min(1, Math.abs(k.speed) / 2) + Math.sin(elapsed * 1.3) * 0.012 + roll * 0.03;
+    k.tiltPivot.rotation.x = Math.sin(elapsed * 1.1 + 0.7) * 0.008;
+  }
+
   // Where the helicopter's skids come to rest: the highest of the ground (the stadium's bowl inside its wall) and the
   // roofs under its skids that it was above. The roofs it rests on are kept, so they don't push it aside.
   helicopterFloor(h, lastY) {
@@ -1239,7 +1738,7 @@ class ThirdPersonControllerManager {
     standing.clear();
     const sn = Math.sin(h.heading), cs = Math.cos(h.heading);
     for (const c of this.nearColliders(x, z, 4)) {
-      if (isStadium(c) || c.maxY < floor - 0.25) continue;
+      if (isStadium(c) || c.thin || c.maxY < floor - 0.25) continue;
       let top = -Infinity;
       for (const [s, f] of HELI_SKIDS) top = Math.max(top, roofHeightAt(c, x + cs * s + sn * f, z - sn * s + cs * f));
       // a roof it was above (or just landing on) holds it up; one above it is a wall it flew into

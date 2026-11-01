@@ -311,6 +311,40 @@ function signal(ctx, walk) {
   }, 0.45);
 }
 
+// A paddle blade going into the water: a soft plunge, then a bubbly gurgle
+function splash(ctx, seed) {
+  const random = randomSource(seed);
+  const low = 1 - Math.exp(-TAU * 500 / ctx.sampleRate), high = 1 - Math.exp(-TAU * 3200 / ctx.sampleRate);
+  let a = 0, b = 0;
+  const bubbles = Array.from({ length: 6 }, () => ({ time: 0.04 + random() * 0.3, freq: 500 + random() * 900, level: 0.2 + random() * 0.4 }));
+  return makeBuffer(ctx, 0.55, (t) => {
+    const noise = random() * 2 - 1;
+    a += (noise - a) * low;
+    b += (noise - b) * high;
+    const plunge = (1 - Math.exp(-t * 300)) * Math.exp(-t * 14);
+    let gurgle = 0;
+    for (const bub of bubbles) {
+      const u = t - bub.time;
+      if (u > 0) gurgle += Math.sin(TAU * bub.freq * u * (1 + u * 3)) * Math.exp(-u * 45) * bub.level;
+    }
+    return (b - a) * plunge * 0.9 + a * plunge * 0.6 + gurgle * 0.25;
+  }, 0.5);
+}
+
+// A car door shutting: a dull thump and a latch click
+function door(ctx) {
+  const random = randomSource(61);
+  const coefficient = 1 - Math.exp(-TAU * 260 / ctx.sampleRate);
+  let low = 0;
+  return makeBuffer(ctx, 0.3, (t) => {
+    const noise = random() * 2 - 1;
+    low += (noise - low) * coefficient;
+    const thump = Math.sin(TAU * 72 * t) * Math.exp(-t * 28) + low * 2.2 * Math.exp(-t * 32);
+    const latch = t > 0.012 ? (noise * 0.4 + Math.sin(TAU * 2300 * t) * 0.3) * Math.exp(-(t - 0.012) * 260) : 0;
+    return thump + latch;
+  }, 0.6);
+}
+
 export function createEventResources(ctx, resources) {
   const speakers = [
     { pitch: 99, formants: 0.88, breath: 0.06 }, { pitch: 119, formants: 0.94, breath: 0.10 },
@@ -330,7 +364,9 @@ export function createEventResources(ctx, resources) {
     },
     gusts: gustBuffer(ctx),
     signalTick: signal(ctx, false),
-    signalWalk: signal(ctx, true)
+    signalWalk: signal(ctx, true),
+    splashes: Array.from({ length: 4 }, (_, i) => splash(ctx, i + 701)),
+    door: door(ctx)
   };
 }
 
@@ -338,7 +374,7 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
   const random = randomSource(options.seed);
   const start = Math.max(ctx.currentTime, finite(options.when, ctx.currentTime));
   const intensity = clamp(finite(options.intensity, 1));
-  const levels = { footstep: 0.22, talk: 0.065, shout: 0.2, horn: 0.23, trainhorn: 0.5, signal: 0.13, crash: 0.35 };
+  const levels = { footstep: 0.22, talk: 0.065, shout: 0.2, horn: 0.23, trainhorn: 0.5, signal: 0.13, crash: 0.35, splash: 0.5, door: 0.45, thud: 0.5 };
   if (!Object.hasOwn(levels, kind) || intensity === 0) return { endTime: start, dispose() {} };
   const gain = ctx.createGain();
   gain.gain.value = intensity * levels[kind];
@@ -426,6 +462,14 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
     if (severity > 0.6) {
       play(resources.crashes.debris[variant], start + 0.012, rate, (severity - 0.6) / 0.4 * 0.24);
     }
+  } else if (kind === 'splash') {
+    play(resources.splashes[Math.floor(random() * resources.splashes.length)], start, 0.9 + random() * 0.2);
+  } else if (kind === 'thud') {
+    // a body against the car: the crash's dull chassis thump, lower and without the metal
+    const variant = Math.floor(random() * resources.crashes.body.length);
+    play(resources.crashes.body[variant], start, 0.62 + random() * 0.1, 1);
+  } else if (kind === 'door') {
+    play(resources.door, start, 0.95 + random() * 0.1);
   } else {
     play(options.walk ? resources.signalWalk : resources.signalTick, start);
   }

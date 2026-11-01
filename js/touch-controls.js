@@ -16,6 +16,8 @@ class TouchControls {
     this.enabled = true;
     this.available = false;
     this.onAvailabilityChange = null;
+    this.onGetInOut = null; // (main.js) the tap button: get in or out
+    this.getInOut = this.root?.querySelector('[data-touch-tap="getinout"]') ?? null;
 
     if (!this.root || !this.stick || !this.knob) return;
 
@@ -56,6 +58,13 @@ class TouchControls {
       }
     }
 
+    this.getInOut?.addEventListener('pointerdown', (event) => {
+      if (!this.canInteract() || event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.onGetInOut?.();
+    });
+
     window.addEventListener('blur', () => this.reset());
     window.addEventListener('resize', () => this.reset());
     document.addEventListener('visibilitychange', () => {
@@ -90,9 +99,16 @@ class TouchControls {
   }
 
   setMode(mode) {
-    if (!['person', 'car', 'cyclist', 'helicopter'].includes(mode)) return;
+    if (!['person', 'car', 'cyclist', 'helicopter', 'kayak'].includes(mode)) return;
     this.reset();
     if (!this.root) return;
+    if (this.getInOut) {
+      const words = mode === 'person' ? 'Get in' : 'Get out';
+      this.getInOut.hidden = false;
+      this.getInOut.setAttribute('aria-label', words);
+      const label = this.root.querySelector('[data-touch-label="getinout"]');
+      if (label) label.textContent = words;
+    }
     const labels = { up: mode === 'helicopter' ? 'Ascend' : 'Jump', down: 'Descend' };
     for (const button of this.buttons) {
       const action = button.getAttribute('data-touch-action');

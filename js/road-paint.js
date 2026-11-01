@@ -15,18 +15,23 @@ const YELLOW = new THREE.Color(0xe8ad22);
 const GREEN = new THREE.Color(0x2a8a4e);
 const STEP = 6; // Lamp: metres between a strip's vertices along it, so it follows the ground
 const HEIGHT = 0.04; // above the asphalt (Lamp: clear of it where the two follow the ground by different cuts, terrain.js)
+const PAINT_CELL_SIZE = 1200;
+const PAINT_CULL_DISTANCE = 1650;
+const WIDEN_SPHERE_PAD = 16; // createRoadPaintMaterial widens thin distant strips up to 16x in screen space
 
-function buildRoadPaint(scene, network) {
-  const position = [];
-  const side = [];
-  const paint = [];
-  const colors = [];
-  const index = [];
-  const lines = [];
-  const bends = new Map();
+// Spatial chunk builder shared by Manhattan street markings and perimeter highway markings (js/city-grid.js), so
+// off-screen and distant (> 1.65 km) road paint is culled instead of transforming all 12.5 km of vertices every frame.
+function createRoadPaintChunkBuilder(name, { cellSize = PAINT_CELL_SIZE, cullDistance = PAINT_CULL_DISTANCE } = {}) {
+  const cells = new Map();
 
-  // Flat strip w wide from a to b, with a dash pattern (period, duty cycle) running along it
-  function strip(ax, az, bx, bz, w, col, period = 1, duty = 1, phase = 0, flow = 1) {
+  function cellAt(mx, mz) {
+    const key = (Math.floor(mx / cellSize) << 16) ^ (Math.floor(mz / cellSize) & 0xffff);
+    let cell = cells.get(key);
+    if (!cell) cells.set(key, (cell = { position: [], side: [], paint: [], colors: [], index: [] }));
+    return cell;
+  }
+
+  function strip3D(ax, ay, az, bx, by, bz, w, col, period = 1, duty = 1, phase = 0, flow = 1) {
     const len = Math.hypot(bx - ax, bz - az);
     if (len < 0.05) return;
     const sx = ((az - bz) / len) * w * 0.5;
@@ -35,12 +40,14 @@ function buildRoadPaint(scene, network) {
     // Lamp: in lengths of at most STEP, so the strip can follow the ground (terrain.js lays each vertex on it and
     // doesn't cut the strip itself: a cut would average its two sides' `side` vectors to nothing)
     const pieces = Math.max(1, Math.ceil(len / STEP));
+    const cell = cellAt((ax + bx) * 0.5, (az + bz) * 0.5);
+    const { position, side, paint, colors, index } = cell;
     const first = position.length / 3;
     for (let k = 0; k <= pieces; k++) {
       const t = k / pieces;
-      const x = ax + (bx - ax) * t, z = az + (bz - az) * t, u = phase + (end - phase) * t;
+      const x = ax + (bx - ax) * t, y = ay + (by - ay) * t, z = az + (bz - az) * t, u = phase + (end - phase) * t;
       for (const s of [-1, 1]) {
-        position.push(x + sx * s, HEIGHT, z + sz * s);
+        position.push(x + sx * s, y, z + sz * s);
         side.push(sx * s, sz * s);
         paint.push(u, period, duty);
         colors.push(col.r, col.g, col.b);
@@ -50,6 +57,57 @@ function buildRoadPaint(scene, network) {
       const i = first + k * 2;
       index.push(i, i + 1, i + 3, i, i + 3, i + 2);
     }
+  }
+
+  function build() {
+    const group = new THREE.Group();
+    group.name = name;
+    const material = createRoadPaintMaterial();
+    let first = null;
+
+    for (const cell of cells.values()) {
+      if (!cell.index.length) continue;
+      const vertCount = cell.position.length / 3;
+      const normal = new Float32Array(cell.position.length);
+      for (let i = 1; i < normal.length; i += 3) normal[i] = 1;
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(cell.position, 3));
+      geometry.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(cell.colors, 3));
+      geometry.setAttribute('side', new THREE.Float32BufferAttribute(cell.side, 2));
+      geometry.setAttribute('paint', new THREE.Float32BufferAttribute(cell.paint, 3));
+      geometry.setIndex(
+        vertCount <= 65535
+          ? new THREE.Uint16BufferAttribute(cell.index, 1)
+          : new THREE.Uint32BufferAttribute(cell.index, 1)
+      );
+      geometry.computeBoundingSphere();
+      if (geometry.boundingSphere) geometry.boundingSphere.radius += WIDEN_SPHERE_PAD;
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = `${name}Chunk`;
+      mesh.receiveShadow = true;
+      mesh.renderOrder = -1; // under the other see-through ground effects (contact shadows, headlight beams)
+      mesh.userData.cullDistance = cullDistance;
+      if (first) mesh.userData.sharesPipelineWith = first;
+      else first = mesh;
+      group.add(mesh);
+    }
+    return group;
+  }
+
+  return { strip3D, build };
+}
+
+function buildRoadPaint(scene, network, sharedBuilder = null) {
+  const builder = sharedBuilder || createRoadPaintChunkBuilder('RoadMarkings');
+  const lines = [];
+  const bends = new Map();
+
+  // Flat strip w wide from a to b, with a dash pattern (period, duty cycle) running along it
+  function strip(ax, az, bx, bz, w, col, period = 1, duty = 1, phase = 0, flow = 1) {
+    builder.strip3D(ax, HEIGHT, az, bx, HEIGHT, bz, w, col, period, duty, phase, flow);
   }
 
   // Edges run between stop lines; s is measured from the start one and o to the right of the centre line
@@ -275,23 +333,9 @@ function buildRoadPaint(scene, network) {
     }
   }
 
-  const normal = new Float32Array(position.length);
-  for (let i = 1; i < normal.length; i += 3) normal[i] = 1;
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
-  geometry.setAttribute('normal', new THREE.BufferAttribute(normal, 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-  geometry.setAttribute('side', new THREE.Float32BufferAttribute(side, 2));
-  geometry.setAttribute('paint', new THREE.Float32BufferAttribute(paint, 3));
-  geometry.setIndex(index);
-
-  const mesh = new THREE.Mesh(geometry, createRoadPaintMaterial());
-  mesh.name = 'RoadMarkings';
-  mesh.receiveShadow = true;
-  mesh.renderOrder = -1; // under the other see-through ground effects (contact shadows, headlight beams)
-  scene.add(mesh);
-  return mesh;
+  const group = builder.build();
+  scene.add(group);
+  return group;
 }
 
-export { buildRoadPaint };
+export { buildRoadPaint, createRoadPaintChunkBuilder };

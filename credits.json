@@ -7,7 +7,7 @@
       "url" : "https://github.com/lampdotdev/newyork"
     },
     {
-      "commit" : "d185760fa7bf1bfea2f77a5bbfd13819ebd6f754",
+      "commit" : "2ef39aef4a2feb95f99e785b3c0e55bdc22bbba9",
       "name" : "Go To Ann Arbor",
       "url" : "https://github.com/mrubens/go-to-ann-arbor",
       "wish" : "3DF4E397-D414-4837-8390-3F7946A6D12D"
@@ -16,7 +16,7 @@
   "upstream" : [
     {
       "author" : "Mr.doob",
-      "commit" : "13dd142b480bcfa01a6b18e36127c87e41cb4d80",
+      "commit" : "e35c06c0d896052a80ff117aefe8b99e978913d4",
       "license" : "MIT",
       "licenseFile" : "Web/LICENSE-slop-newyork",
       "name" : "Slop New York",

@@ -271,6 +271,115 @@ function riverDepth(x, z) {
   return r ? digAt(r, x, z) : 0;
 }
 
+// Which way the river runs: the distance along the water (on a 6 m grid of its open water) from the lowest point of its
+// largest stretch, measured once when it's first asked for. Downstream is where that distance falls.
+const FLOW_STEP = 6;
+function flowField() {
+  const r = grid?.river;
+  if (!r) return null;
+  if (r.flow !== undefined) return r.flow;
+  const cols = Math.floor((r.dcols - 1) * r.dstep / FLOW_STEP), rows = Math.floor((r.drows - 1) * r.dstep / FLOW_STEP);
+  const n = cols * rows, x0 = r.dx0 + FLOW_STEP / 2, z0 = r.dz0 + FLOW_STEP / 2;
+  const wet = new Uint8Array(n);
+  for (let w = 0; w < rows; w++) for (let c = 0; c < cols; c++) {
+    if (digAt(r, x0 + c * FLOW_STEP, z0 + w * FLOW_STEP) > 0.35) wet[w * cols + c] = 1;
+  }
+  const NB = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, 1.414], [1, -1, 1.414], [-1, 1, 1.414], [-1, -1, 1.414]];
+  // the stretches of water that join up, and the biggest of them
+  const part = new Int32Array(n).fill(-1);
+  const queue = new Int32Array(n);
+  let best = -1, bestSize = 0;
+  for (let i = 0; i < n; i++) {
+    if (!wet[i] || part[i] >= 0) continue;
+    let head = 0, tail = 0;
+    queue[tail++] = i; part[i] = i;
+    while (head < tail) {
+      const k = queue[head++], c = k % cols, w = (k - c) / cols;
+      for (const [dc, dw] of NB) {
+        const cc = c + dc, ww = w + dw;
+        if (cc < 0 || ww < 0 || cc >= cols || ww >= rows) continue;
+        const j = ww * cols + cc;
+        if (wet[j] && part[j] < 0) { part[j] = i; queue[tail++] = j; }
+      }
+    }
+    if (tail > bestSize) { bestSize = tail; best = i; }
+  }
+  if (best < 0) return (r.flow = null);
+  // each stretch runs to its own lowest point (a pond above a dam to the dam, the river on to Gallup)
+  const lows = new Map();
+  for (let i = 0; i < n; i++) {
+    if (part[i] < 0) continue;
+    const c = i % cols, w = (i - c) / cols, lv = levelAt(r, x0 + c * FLOW_STEP, z0 + w * FLOW_STEP);
+    const was = lows.get(part[i]);
+    if (!was || lv < was.level) lows.set(part[i], { level: lv, at: i });
+  }
+  // the distance along the water from there, relaxed until it settles
+  const dist = new Float32Array(n).fill(Infinity);
+  const inQueue = new Uint8Array(n);
+  let head = 0, size = 0;
+  for (const { at } of lows.values()) { dist[at] = 0; queue[size++] = at; inQueue[at] = 1; }
+  while (size > 0) {
+    const k = queue[head]; head = (head + 1) % n; size--; inQueue[k] = 0;
+    const c = k % cols, w = (k - c) / cols, d = dist[k];
+    for (const [dc, dw, cost] of NB) {
+      const cc = c + dc, ww = w + dw;
+      if (cc < 0 || ww < 0 || cc >= cols || ww >= rows) continue;
+      const j = ww * cols + cc;
+      if (part[j] !== part[k] || dist[j] <= d + cost) continue;
+      dist[j] = d + cost;
+      if (!inQueue[j]) { inQueue[j] = 1; queue[(head + size) % n] = j; size++; }
+    }
+  }
+  let far = 0;
+  for (let i = 0; i < n; i++) if (part[i] === best && dist[i] > far) far = dist[i];
+  console.log(`[terrain] the river runs ${Math.round(far * FLOW_STEP / 1000 * 10) / 10} km to its lowest point here, in ${lows.size} stretches`);
+  return (r.flow = { cols, rows, x0, z0, wet, dist });
+}
+
+// The way the river runs at (x, z), into `out` as a unit { x, z } downstream; false where there's no current there
+function riverFlow(x, z, out) {
+  const f = flowField();
+  if (!f) return false;
+  const fx = (x - f.x0) / FLOW_STEP, fz = (z - f.z0) / FLOW_STEP;
+  const c0 = Math.floor(fx), w0 = Math.floor(fz);
+  if (c0 < 1 || w0 < 1 || c0 >= f.cols - 2 || w0 >= f.rows - 2) return false;
+  const { cols, dist } = f;
+  let gx = 0, gz = 0;
+  for (let dw = 0; dw <= 1; dw++) for (let dc = 0; dc <= 1; dc++) {
+    const c = c0 + dc, w = w0 + dw, i = w * cols + c, d = dist[i];
+    if (!Number.isFinite(d)) continue;
+    const wgt = (dc ? fx - c0 : 1 - (fx - c0)) * (dw ? fz - w0 : 1 - (fz - w0));
+    const e = dist[i + 1], we = dist[i - 1], s = dist[i + cols], nn = dist[i - cols];
+    gx += wgt * ((Number.isFinite(e) ? e : d) - (Number.isFinite(we) ? we : d));
+    gz += wgt * ((Number.isFinite(s) ? s : d) - (Number.isFinite(nn) ? nn : d));
+  }
+  const l = Math.hypot(gx, gz);
+  if (l < 1e-4) return false;
+  out.x = -gx / l;
+  out.z = -gz / l;
+  return true;
+}
+
+// The nearest open water to (x, z) within `reach` metres, as { x, z }, or null
+function nearestWater(x, z, reach = 600) {
+  const f = flowField();
+  if (!f) return null;
+  const fc = Math.round((x - f.x0) / FLOW_STEP), fw = Math.round((z - f.z0) / FLOW_STEP);
+  const span = Math.ceil(reach / FLOW_STEP);
+  let best = null, bestD = Infinity;
+  for (let w = Math.max(0, fw - span); w <= Math.min(f.rows - 1, fw + span); w++) {
+    for (let c = Math.max(0, fc - span); c <= Math.min(f.cols - 1, fc + span); c++) {
+      const i = w * f.cols + c;
+      if (!f.wet[i] || !Number.isFinite(f.dist[i])) continue;
+      const px = f.x0 + c * FLOW_STEP, pz = f.z0 + w * FLOW_STEP;
+      if (riverDepth(px, pz) < 0.9) continue;
+      const d = (px - x) ** 2 + (pz - z) ** 2;
+      if (d < bestD) { bestD = d; best = { x: px, z: pz }; }
+    }
+  }
+  return best;
+}
+
 // The lowest ground under a footprint: its middle and corners, so a building is never left floating on its low side.
 function groundUnder(x, z, halfW = 0, halfD = 0, rotY = 0) {
   if (!grid) return 0;
@@ -617,6 +726,6 @@ function setOnTerrain(root, tolerance = 0.05) {
 }
 
 export {
-  loadTerrain, groundHeight, riverbedHeight, riverDepth, waterLevel, bridgeDecks, groundUnder, stadiumGround, groundSlope, groundTilt, groundHeightNode,
+  loadTerrain, groundHeight, riverbedHeight, riverDepth, riverFlow, nearestWater, waterLevel, bridgeDecks, groundUnder, stadiumGround, groundSlope, groundTilt, groundHeightNode,
   tessellate, drapeGeometry, liftGeometry, liftInstances, setOnTerrain
 };

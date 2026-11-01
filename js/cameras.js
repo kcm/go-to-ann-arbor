@@ -252,6 +252,9 @@ class CameraSystem {
         } else if (entity.type === 'helicopter') {
           fwdOffset = 1.65;
           eyeY = 1.65;
+        } else if (entity.type === 'kayak') {
+          fwdOffset = -0.05;
+          eyeY = 0.98;
         }
 
         desiredPos.set(

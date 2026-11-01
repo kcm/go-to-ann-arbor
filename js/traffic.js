@@ -10,6 +10,7 @@ import {
   buildCarGeometry,
   buildCarProxyGeometry,
   buildSteerableWheelGeo,
+  createCarWheelMaterial,
   createLoftedCarMaterial,
   carStyleCode,
   annArborCar,
@@ -106,6 +107,8 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   let collisionListener = null;
   const collisionEvent = { a: null, b: null, kind: 'vehicle', x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0, speed: 0 };
 
+  let playerStruck = null;
+  function setPlayerStruckListener(listener) { playerStruck = listener; }
   function setCollisionListener(listener) {
     collisionListener = typeof listener === 'function' ? listener : null;
   }
@@ -177,7 +180,10 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   // Every body kind shares one 3D wheel model, instanced separately and scaled to the kind's wheel radius
   const carWheelLeftGeo = buildSteerableWheelGeo(BODY_SPECS.sedan, -1);
   const carWheelRightGeo = buildSteerableWheelGeo(BODY_SPECS.sedan, 1);
-  const carWheelMat = createLoftedCarMaterial(BODY_SPECS.sedan, 0xffbe14);
+  const carWheelStyles = new THREE.InstancedBufferAttribute(new Float32Array(NUM_CARS * 2), 1);
+  carWheelLeftGeo.setAttribute('wheelStyle', carWheelStyles);
+  carWheelRightGeo.setAttribute('wheelStyle', carWheelStyles);
+  const carWheelMat = createCarWheelMaterial({ instanced: true });
 
   // Ann Arbor's police cruisers: white, the blue stripe and lettering on the doors
   const policeWhite = new THREE.Color(0xf6f9fc);
@@ -243,6 +249,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
 
   const carWheelLeftInst = new THREE.InstancedMesh(carWheelLeftGeo, carWheelMat, NUM_CARS * 2);
   const carWheelRightInst = new THREE.InstancedMesh(carWheelRightGeo, carWheelMat, NUM_CARS * 2);
+  carWheelRightInst.userData.sharesPipelineWith = carWheelLeftInst;
 
   // 3D Collision Spark & Debris Particle Pool
   const MAX_SPARKS = 120;
@@ -1415,6 +1422,8 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     }
     impactSuspension(v, -hit.nx, -hit.nz, hit.impulse / b.mass);
     if (pe.type !== 'person') reportCollision(pe, v, hit.x, 0.58, hit.z, hit.nx, hit.nz, speed);
+    // the player on foot or on the bike, hit hard enough to go down: flung the way the car pushed them
+    if ((pe.type === 'person' || pe.type === 'cyclist') && speed > 3.5) playerStruck?.(hit.nx * speed, hit.nz * speed, speed, pe.type);
     if (speed > 2.2) spawnCollisionSparks(hit.x, 0.58, hit.z, hit.nx, hit.nz, speed);
   }
 
@@ -1621,6 +1630,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   const CAR_PROXY_DISTANCE = 90;
   const dirtyPaint = new Set();
   const dirtyState = new Set();
+  let dirtyWheelStyles = false;
   const litVehicles = [];
   let litVehicleCount = 0;
   let wheelCars = 0;
@@ -1749,6 +1759,12 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     }
 
     if (near) {
+      const wi = wheelCars * 2;
+      const ws = carWheelStyles.array;
+      if (ws[wi] !== c.style || ws[wi + 1] !== c.style) {
+        ws[wi] = ws[wi + 1] = c.style;
+        dirtyWheelStyles = true;
+      }
       placeWheels(c, wheelCars++, rotY, c.roll, spec.wheelRadius, spec.wheelX, spec.wheelZ, carWheelLeftInst, carWheelRightInst);
     }
   }
@@ -1968,6 +1984,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     scheduleBuses(dt, jump);
     buildOccupancy();
     for (const m of bodyMeshes) m.count = 0;
+    dirtyWheelStyles = false;
     litVehicleCount = 0;
     wheelCars = 0;
     visibleCars = 0;
@@ -2031,6 +2048,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     };
     syncInst(carWheelLeftInst, wheelCars * 2);
     syncInst(carWheelRightInst, wheelCars * 2);
+    if (dirtyWheelStyles && wheelCars > 0) flagRange(carWheelStyles, wheelCars * 2);
     syncInst(policeLightbars.sedan, policeDrawn.sedan);
     syncInst(policeLightbars.suv, policeDrawn.suv);
     syncInst(carShadowInst, visibleCars);
@@ -2054,15 +2072,49 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     updateSparks(dt);
   }
 
+  // Lamp: the player taking a car out of traffic (F, main.js): the nearest car within `reach` of (x, z), as it is
+  // (its look, where it is, its heading and speed), taken off the road (it comes back elsewhere, as a far car does)
+  const takeColor = new THREE.Color();
+  function takeCar(x, z, reach) {
+    let best = null, bestD = reach;
+    for (const v of cars) {
+      if (!v.edge) continue;
+      const d = Math.hypot(v.x - x, v.z - z);
+      if (d < bestD) { bestD = d; best = v; }
+    }
+    if (!best) return null;
+    const v = best;
+    const taken = {
+      kind: v.bodyType, hex: takeColor.setRGB(v.paint[0], v.paint[1], v.paint[2]).getHex(), style: v.style,
+      x: v.x, z: v.z, yaw: v.yaw + (v.yawOffset || 0), speed: v.speed, distance: bestD
+    };
+    v.edge = null;
+    v.conn = null;
+    v.trail = null;
+    v.commit = null;
+    v.speed = 0;
+    return taken;
+  }
+  // The nearest traffic car's distance, to choose between it and what else is near
+  function nearestCar(x, z, reach) {
+    let bestD = Infinity;
+    for (const v of cars) if (v.edge) bestD = Math.min(bestD, Math.hypot(v.x - x, v.z - z));
+    return bestD <= reach ? bestD : null;
+  }
+
   return {
     group,
     update,
     setCollisionListener,
+    takeCar,
+    nearestCar,
     cars,
     buses,
     peds: pedestrianSystem.peds,
     setCrowdBusy: pedestrianSystem.setBusy,
     crowdStats: pedestrianSystem.stats,
+    setPedestrianHitListener: pedestrianSystem.setHitListener,
+    setPlayerStruckListener,
     network
   };
 }

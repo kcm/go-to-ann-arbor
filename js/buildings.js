@@ -513,7 +513,12 @@ function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasSta
     let ground = groundHeight(b.cx, b.cz);
     for (const polygon of b.polygons) for (const p of polygon.outer) ground = Math.min(ground, groundHeight(p.x, p.z));
     b.ground = ground;
-    surveyedBuckets[mat].push({ ...b, tone, ground });
+    // Lamp: storefronts (tsl-materials.js) where the survey or the city says shops: a shop building, or a shop or
+    // mixed-use parcel, not the University's own or a house-style one
+    const storefronts = b.height >= 6 && kind !== 5 && (mat < 5 || mat > 7)
+      && (kind === 2 || use === LAND_USE.SHOPS || use === LAND_USE.MIXED_USE);
+    const record = { ...b, tone, ground, storefronts };
+    surveyedBuckets[mat].push(record);
     const detail = {
       cx: b.cx, cz: b.cz, minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ,
       cornices: [], waterTowers: [], hvacUnits: [], fireEscapes: [], awnings: [], scaffoldSheds: [], footprints: []
@@ -527,7 +532,7 @@ function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasSta
     }
     const neighbours = nearbyReserves(b, 6);
     addSurveyedFireEscapes(b, detail, storeys[mat], neighbours);
-    if (mat < 5 || mat > 7) detailsToPlace.push({ b, detail, masonry: mat < 2 || mat > 7, rand });
+    if (mat < 5 || mat > 7) detailsToPlace.push({ b: record, detail, masonry: mat < 2 || mat > 7, rand });
     else quadtree.insert(detail); // houses: no storefront awnings or rooftop plant
     allBlocks.push(detail);
   }
@@ -907,7 +912,7 @@ function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasSta
     let corniceCount = 0;
     let wtCount = 0;
     let hvacCount = 0;
-    fireEscapeSystem.begin();
+    fireEscapeSystem.begin(focusX, focusZ);
     let awningCount = 0;
     let awningBlocks = 0;
     let shedCount = 0;
