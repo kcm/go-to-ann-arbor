@@ -181,7 +181,7 @@ const TRAINS = {
   'Great Lakes Central Railroad': { cars: ['diesel', 'boxcar', 'tank'], speed: 6, wait: 60, horn: false }
 };
 
-function buildRailways(group) {
+function buildRailways(group, crossings = []) {
   const rail = GEO.rail;
   const result = { group, trains: [], update() {} };
   if (!rail) return result;
@@ -299,6 +299,8 @@ function buildRailways(group) {
   const bridgeBoxes = bridges.map((b) => [Math.min(...b.x) - 4, Math.max(...b.x) + 4, Math.min(...b.z) - 4, Math.max(...b.z) + 4]);
   const nearBridge = (o) => bridgeBoxes.some(([x0, x1, z0, z1]) => o.x > x0 && o.x < x1 && o.z > z0 && o.z < z1);
   for (const t of result.trains) place(t);
+  const gates = buildCrossingGates(group, crossings, rail, result.trains);
+  result.crossings = gates.list || [];
 
   // Each frame: accelerate toward the line speed, slow to a stop at the end of the line, wait, and go back; sound the
   // horn as it sets off and every so often on the way
@@ -324,8 +326,169 @@ function buildRailways(group) {
       if (t.horn && onHorn && t.v > 4 && t.sinceHorn > 45) { sample(t.path, t.s, at); onHorn(at); t.sinceHorn = 0; }
       place(t);
     }
+    gates.update(dt);
   };
   return result;
+}
+
+// --- Crossing gates where a street crosses the tracks at grade (rail-crossings.json, OpenStreetMap's level crossings):
+// on each side of the tracks, at the curb on the right of the traffic coming up to them, a mast with a crossbuck, two
+// red lamps and a red and white striped arm across the lanes. When a train comes within about 160 m, the lamps flash
+// in turn and the arms come down; once it has passed they go up again.
+const ARM_UP = 1.45, ARM_DOWN = 0.03, LEAD = 160;
+function buildCrossingGates(group, crossings, rail, trains) {
+  const none = { update() {} };
+  const G = GEO.roadGraph;
+  if (!crossings.length || !G) return none;
+  // the streets' and the main tracks' straight pieces near each crossing
+  const N = G.nodes;
+  const near = (x, z, x0, z0, x1, z1) => {
+    const dx = x1 - x0, dz = z1 - z0, L2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / L2));
+    return Math.hypot(x0 + dx * t - x, z0 + dz * t - z);
+  };
+  const closest = (x, z, lines, max) => {
+    let best = null, bd = max;
+    for (const { pts, data } of lines) {
+      for (let i = 0; i + 3 < pts.length; i += 2) {
+        if (Math.abs(pts[i] - x) > max + 200 && Math.abs(pts[i + 2] - x) > max + 200) continue;
+        const d = near(x, z, pts[i], pts[i + 1], pts[i + 2], pts[i + 3]);
+        if (d < bd) {
+          const dx = pts[i + 2] - pts[i], dz = pts[i + 3] - pts[i + 1], L = Math.hypot(dx, dz) || 1;
+          bd = d; best = { dx: dx / L, dz: dz / L, data };
+        }
+      }
+    }
+    return best;
+  };
+  const streets = [];
+  for (const [a, b, , w, , , flat, cls] of G.links) {
+    if (cls === 0) continue;
+    streets.push({ pts: [N[a * 2], N[a * 2 + 1], ...flat, N[b * 2], N[b * 2 + 1]], data: w });
+  }
+  const tracks = rail.tracks.filter(([flat, bridge]) => !bridge && flat.length >= 4).map(([flat]) => ({ pts: flat, data: 0 }));
+
+  const posts = [], list = [];
+  for (let i = 0; i + 2 < crossings.length; i += 3) {
+    const x = crossings[i], z = crossings[i + 1], gated = crossings[i + 2];
+    const road = closest(x, z, streets, 14), track = closest(x, z, tracks, 10);
+    if (!road || !track) continue;
+    if (list.some((c) => Math.hypot(c.x - x, c.z - z) < 18)) continue; // two tracks side by side: one pair of gates
+    const sin = Math.abs(road.dx * track.dz - road.dz * track.dx);
+    if (sin < 0.25) continue;
+    const half = Math.min(9, Math.max(3.5, road.data / 2));
+    const D = Math.min(16, 4.2 / sin + 1.5);
+    const rx = -road.dz, rz = road.dx; // the right of travel along the street's direction
+    const c = { x, z, gated, on: false, t: 0, arm: ARM_UP, at: trains.map(() => null), first: posts.length };
+    for (const side of [1, -1]) {
+      // traffic heading `side` along the street meets this gate before the tracks
+      const px = x - side * road.dx * D + side * rx * (half + 0.7), pz = z - side * road.dz * D + side * rz * (half + 0.7);
+      const ax = -side * rx, az = -side * rz; // the arm reaches back over the lanes
+      posts.push({ x: px, y: groundHeight(px, pz), z: pz, yaw: Math.atan2(-az, ax), len: Math.min(half + 0.2, 8.5) });
+    }
+    // where on each train's line this crossing is
+    trains.forEach((t, k) => {
+      const p = t.path;
+      let bd = 12, bs = null;
+      for (let j = 0; j < p.x.length; j++) {
+        const d = Math.hypot(p.x[j] - x, p.z[j] - z);
+        if (d < bd) { bd = d; bs = p.d[j]; }
+      }
+      c.at[k] = bs;
+    });
+    list.push(c);
+  }
+  if (!list.length) return none;
+
+  // the masts: a pole, a crossbuck, a crossbar with two lamps' hoods, and the arm's counterweight box
+  const parts = [
+    box(0.16, 4.0, 0.16, 0, 2.0, 0, 0xd9d9d6),
+    box(0.5, 0.5, 0.4, 0.15, 1.05, 0, 0x3a3a3a),
+    box(1.1, 0.12, 0.08, 0, 2.45, -0.1, 0x1c1c1c),
+    box(0.34, 0.34, 0.06, -0.38, 2.45, -0.15, 0x111111),
+    box(0.34, 0.34, 0.06, 0.38, 2.45, -0.15, 0x111111),
+    box(0.4, 0.35, 0.1, 0, 3.05, -0.1, 0x111111),
+    tinted(new THREE.BoxGeometry(1.5, 0.22, 0.03).rotateZ(Math.PI / 4).translate(0, 3.6, -0.12), 0xf4f4f0),
+    tinted(new THREE.BoxGeometry(1.5, 0.22, 0.03).rotateZ(-Math.PI / 4).translate(0, 3.6, -0.13), 0xf4f4f0)
+  ];
+  const strip = (g) => { for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'color'].includes(k)) g.deleteAttribute(k); return g; };
+  const postGeo = mergeGeometries(parts.map(strip), false);
+  const mat = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.6 });
+  const postMesh = new THREE.InstancedMesh(postGeo, mat, posts.length);
+  // the arm: 1 m long from its pivot along +x, in red and white stripes, stretched to each street's width
+  const armParts = [];
+  for (let k = 0; k < 8; k++) armParts.push(box(0.125, 0.09, 0.07, (k + 0.5) / 8, 0, 0, k % 2 ? 0xf4f4f0 : 0xc81e1e));
+  const armMesh = new THREE.InstancedMesh(mergeGeometries(armParts.map(strip), false), mat, posts.length);
+  // the lamps, lit by their own colour
+  const lampMesh = new THREE.InstancedMesh(new THREE.CircleGeometry(0.15, 12), new THREE.MeshBasicNodeMaterial(), posts.length * 2);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), q2 = new THREE.Quaternion(), v = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0), zAxis = new THREE.Vector3(0, 0, 1), one = new THREE.Vector3(1, 1, 1), sc = new THREE.Vector3();
+  const OFF = new THREE.Color(0x2a0606), ON = new THREE.Color(0xff3020).multiplyScalar(8);
+  posts.forEach((p, i) => {
+    q.setFromAxisAngle(up, p.yaw);
+    postMesh.setMatrixAt(i, m.compose(v.set(p.x, p.y, p.z), q, one));
+    for (const s of [0, 1]) {
+      const lx = s ? 0.38 : -0.38;
+      v.set(lx, 2.45, -0.19).applyQuaternion(q).add(new THREE.Vector3(p.x, p.y, p.z));
+      q2.copy(q).multiply(new THREE.Quaternion().setFromAxisAngle(up, Math.PI));
+      lampMesh.setMatrixAt(i * 2 + s, m.compose(v, q2, one));
+      lampMesh.setColorAt(i * 2 + s, OFF);
+    }
+  });
+  const placeArm = (i, angle) => {
+    const p = posts[i];
+    q.setFromAxisAngle(up, p.yaw).multiply(q2.setFromAxisAngle(zAxis, angle));
+    v.set(0.35, 1.05, 0).applyAxisAngle(up, p.yaw);
+    armMesh.setMatrixAt(i, m.compose(v.set(p.x + v.x, p.y + 1.05, p.z + v.z), q, sc.set(p.len, 1, 1)));
+  };
+  posts.forEach((p, i) => placeArm(i, ARM_UP));
+  for (const mesh of [postMesh, armMesh, lampMesh]) { mesh.castShadow = mesh !== lampMesh; mesh.receiveShadow = true; group.add(mesh); }
+  postMesh.name = 'CrossingGates';
+  armMesh.name = 'CrossingArms';
+  lampMesh.name = 'CrossingLamps';
+
+  let clock = 0;
+  return {
+    list,
+    update(dt) {
+      clock += dt;
+      let armsMoved = false, lampsChanged = false;
+      for (const c of list) {
+        // a train on the crossing, or coming up to it
+        let on = false;
+        trains.forEach((t, k) => {
+          const s = c.at[k];
+          if (s === null || on) return;
+          const tail = t.s - t.dir * t.length;
+          let lo = Math.min(t.s, tail) - 10, hi = Math.max(t.s, tail) + 10;
+          if (t.waiting <= 0) { if (t.dir > 0) hi += LEAD; else lo -= LEAD; }
+          on = s >= lo && s <= hi;
+        });
+        if (on || c.on) {
+          // lamps flash in turn while it's down, and for a moment after
+          c.t = on ? 3 : c.t - dt;
+          const lit = c.t > 0;
+          const phase = Math.floor(clock * 2) % 2;
+          for (const i of [c.first, c.first + 1]) {
+            lampMesh.setColorAt(i * 2, lit && phase === 0 ? ON : OFF);
+            lampMesh.setColorAt(i * 2 + 1, lit && phase === 1 ? ON : OFF);
+          }
+          lampsChanged = true;
+          c.on = lit;
+        }
+        const want = on && c.gated ? ARM_DOWN : ARM_UP;
+        if (c.arm !== want) {
+          const speed = 0.6 * dt; // about 2.5 s to swing
+          c.arm = want < c.arm ? Math.max(want, c.arm - speed) : Math.min(want, c.arm + speed);
+          placeArm(c.first, c.arm);
+          placeArm(c.first + 1, c.arm);
+          armsMoved = true;
+        }
+      }
+      if (armsMoved) armMesh.instanceMatrix.needsUpdate = true;
+      if (lampsChanged && lampMesh.instanceColor) lampMesh.instanceColor.needsUpdate = true;
+    }
+  };
 }
 
 function pierQuads(x, y, z, h, yaw) {

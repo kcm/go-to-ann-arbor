@@ -410,7 +410,7 @@ function buildRoadNetwork(sidewalks, obstacles, signalIntersections = []) {
       // the bike lanes' and parking lanes' widths on this direction's right and left (`along` the way as drawn, or against it)
       const info = (along) => {
         const [pr, pl, kr, kl] = along ? [pR, pL, park.right, park.left] : [pL, pR, park.left, park.right];
-        return { cls: l.cls, bikeR: pr, bikeL: pl, parkR: kr, parkL: kl, share: l.bike & 12, mph: l.mph };
+        return { cls: l.cls, bikeR: pr, bikeL: pl, parkR: kr, parkL: kl, share: l.bike & 12, mph: l.mph, street: l.name };
       };
       if (l.dir !== 0) {
         const n = Math.max(1, l.lanes || 1);

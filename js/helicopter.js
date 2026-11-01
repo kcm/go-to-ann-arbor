@@ -301,7 +301,7 @@ let _heliLoftedMat = null;
  * Creates the TSL procedural material for the 3D Lofted Sightseeing Helicopter:
  * - Renders wrap-around panoramic windscreen, chin bubble windows, sightseeing cabin side windows,
  *   and overhead skylight glass using anti-aliased `roundedRect` SDFs with rubber seals & frame pillars.
- * - Renders a sleek flush executive NYC Sightseeing livery (Pearl Aviation White upper cabin,
+ * - Renders a sleek flush executive sightseeing livery (Pearl Aviation White upper cabin,
  *   Deep Midnight Navy belly/tailboom, and a sweeping Metallic Gold & Crimson accent stripe).
  * - Renders slatted turbine air intakes on the engine cowling and high-visibility yellow tips on rotor blades.
  */
@@ -360,7 +360,7 @@ function createLoftedHelicopterMaterial() {
       .mul(isFuselage)
       .toVar();
 
-    // 2. Flush Executive NYC Sightseeing Livery (Aviation White + Midnight Navy + Sweeping Gold Ribbon)
+    // 2. Flush Executive Sightseeing Livery (Aviation White + Midnight Navy + Sweeping Gold Ribbon)
     const navyCurveY = float(1.00).add(p.z.mul(-0.085));
     const edgeW = max(fwidth(p.y), 0.008);
     const isLowerNavy = smoothstep(navyCurveY.add(edgeW), navyCurveY.sub(edgeW), p.y);

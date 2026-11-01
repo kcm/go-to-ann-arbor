@@ -22,11 +22,12 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 
 // Exposure and white balance belong to the camera, independently of the physical lighting presets.
 // Keep exposure restrained for ACES; stronger bloom stays selective so midtones retain their contrast.
+// Lamp: brighter than the original (the person found the game too dark), most of all after dark
 const LOOKS = {
-  golden:   { exposure: 1.04, contrast: 1.12, saturation: 1.08, balance: [1.045, 1.00, 0.955], bloom: 0.24, threshold: 1.20 },
-  midday:   { exposure: 1.00, contrast: 1.10, saturation: 1.06, balance: [1.015, 1.00, 0.985], bloom: 0.18, threshold: 1.35 },
-  twilight: { exposure: 1.06, contrast: 1.10, saturation: 1.08, balance: [1.025, 0.995, 1.015], bloom: 0.28, threshold: 1.05 },
-  midnight: { exposure: 1.04, contrast: 1.08, saturation: 1.06, balance: [0.985, 1.00, 1.035], bloom: 0.30, threshold: 1.00 }
+  golden:   { exposure: 1.42, contrast: 1.05, saturation: 1.08, balance: [1.045, 1.00, 0.955], bloom: 0.24, threshold: 1.30 },
+  midday:   { exposure: 1.15, contrast: 1.04, saturation: 1.06, balance: [1.015, 1.00, 0.985], bloom: 0.18, threshold: 1.45 },
+  twilight: { exposure: 1.85, contrast: 1.03, saturation: 1.08, balance: [1.025, 0.995, 1.015], bloom: 0.28, threshold: 1.20 },
+  midnight: { exposure: 2.1, contrast: 1.02, saturation: 1.06, balance: [0.985, 1.00, 1.035], bloom: 0.30, threshold: 1.15 }
 };
 
 function createPostProcessing(renderer, sceneColor, reflections, options = {}) {

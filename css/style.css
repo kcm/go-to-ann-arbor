@@ -274,6 +274,11 @@ body::after {
   right: var(--edge);
 }
 
+/* In its own window on the Mac the top strip is the window's title bar, which takes clicks for moving the window:
+   the top panels sit below it, clear of the window's buttons */
+html.mac-window .hud-top-left,
+html.mac-window .hud-top-right { top: 58px; }
+
 .hud-bottom-left {
   left: var(--edge);
   bottom: var(--edge);
@@ -1054,7 +1059,12 @@ body[data-mode='helicopter'] .gauge-alt {
 
 .fullmap-modal:not(.hidden) .fullmap-header,
 .fullmap-modal:not(.hidden) .map-controls,
-.fullmap-modal:not(.hidden) .fullmap-footer {
+.fullmap-modal:not(.hidden) .fullmap-credit { color: var(--text-3); }
+
+.map-clear-route { pointer-events: auto; gap: 7px; }
+.map-clear-route.hidden { display: none; }
+
+.fullmap-footer {
   animation: rise-in 0.45s var(--ease-out) both;
 }
 
@@ -1173,6 +1183,7 @@ body[data-mode='helicopter'] .gauge-alt {
   bottom: var(--edge);
   translate: -50% 0;
   display: flex;
+  gap: 10px;
   max-width: min(560px, calc(100% - 2 * var(--edge) - 2 * 200px));
 }
 
@@ -1447,4 +1458,14 @@ body.touch-enabled .pop-item { min-height: 44px; }
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Lamp: the app's logo, Burton Tower against a maize sun over the road, in place of the old A2 bullet */
+.mta-bullet.app-logo {
+  background: none;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.mta-bullet.app-logo.loader-bullet {
+  border-radius: 14px;
 }

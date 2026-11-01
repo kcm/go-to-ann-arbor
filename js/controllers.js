@@ -25,8 +25,9 @@ import {
 import { PersonCrowd, PersonRig } from './pedestrians.js';
 import { HEADLIGHTS, createVehicleHeadlight, placeVehicleHeadlight } from './vehicle-lights.js';
 import { bryantParkLawn } from './landmarks.js';
-import { groundHeight, groundTilt } from './terrain.js';
-import { polygonContact } from './building-collision.js';
+import { groundHeight, groundTilt, stadiumGround } from './terrain.js';
+import { polygonContact, polygonContains } from './building-collision.js';
+import { bowlSurface } from './stadium-shape.js';
 import { hot } from '../lamp-game.js';
 
 // Player models, animation and movement for walking, driving, cycling and flying.
@@ -34,6 +35,8 @@ import { hot } from '../lamp-game.js';
 // Spawn on Main St in downtown Ann Arbor, between William and Liberty, facing north up Main
 const SPAWN_Z = 100;
 const groundCollider = { type: 'ground' };
+// The skids' ends and middle, [across, along] in metres from the helicopter's middle
+const HELI_SKIDS = [[0, 0], [-1.1, -1.8], [1.1, -1.8], [-1.1, 1.8], [1.1, 1.8]];
 
 const CAR_DRIVE = {
   speed: 36, reverseSpeed: 10.5, acceleration: 4.5,
@@ -80,6 +83,38 @@ function collisionBody(mode, radius, heading, margin = 0) {
     top: mode === 'helicopter' ? 3.2 : car ? 1.8 : 1.9
   };
 }
+
+// The height of a building's roof at (x, z), or -Infinity outside it: a house's own pitched roofs (houses.js gives its
+// collider their shapes), else the top of its outline
+function roofHeightAt(c, x, z) {
+  if (x < c.minX - 0.5 || x > c.maxX + 0.5 || z < c.minZ - 0.5 || z > c.maxZ + 0.5) return -Infinity;
+  if (c.roofs) {
+    let y = -Infinity;
+    for (const R of c.roofs) {
+      const dx = x - R.cx, dz = z - R.cz;
+      const a = Math.abs(dx * R.ax + dz * R.az), b = dx * R.bx + dz * R.bz, ab = Math.abs(b);
+      if (!(R.hb > 0.05) || a > R.ha + 0.3 || ab > R.hb + 0.45) continue;
+      const k = Math.max(0, 1 - ab / R.hb);
+      const h = R.type === 'flat' ? R.top + 0.35
+        : R.type === 'hip' ? R.top + R.rh * Math.max(0, Math.min(k, (R.ha - a) / R.hb))
+          : R.type === 'shed' ? R.top + R.rh * Math.max(0, Math.min(1, (R.high * b / R.hb + 1) / 2))
+            : R.top + R.rh * k;
+      y = Math.max(y, h);
+    }
+    return y;
+  }
+  if (c.polygon) return polygonContains(c.polygon, x, z) ? c.maxY : -Infinity;
+  const o = c.obb;
+  if (o) {
+    const dx = x - o.cx, dz = z - o.cz;
+    return Math.abs(dx * o.cs - dz * o.sn) <= o.hx && Math.abs(dx * o.sn + dz * o.cs) <= o.hz ? c.maxY : -Infinity;
+  }
+  return c.maxY;
+}
+
+// Michigan Stadium's collider (landmarks.js), which keeps cars and people outside its wall but not the helicopter
+const isStadium = (c) => c.stadium || (c._bowl ??= !c.polygon && !c.obb
+  && bowlSurface((c.minX + c.maxX) / 2, (c.minZ + c.maxZ) / 2) !== null);
 
 // Movement and teleports share exact footprint checks after rejecting distant bounds.
 // Walking/cycling/flying use circles; cars use oriented rectangles.
@@ -134,40 +169,7 @@ function buildingContact(c, x, y, z, body, contact) {
   return true;
 }
 
-function createTaxiDoorDecalTexture() {
-  const c = document.createElement('canvas');
-  c.width = 256;
-  c.height = 128;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#ffbe14';
-  ctx.fillRect(0, 0, 256, 128);
-  // Black T&LC circle emblem
-  ctx.fillStyle = '#111317';
-  ctx.beginPath();
-  ctx.arc(58, 64, 42, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#ffbe14';
-  ctx.font = '900 32px Inter, Arial, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('T', 58, 66);
-  // NYC TAXI typography & Fare Rate
-  ctx.fillStyle = '#111317';
-  ctx.textAlign = 'left';
-  ctx.font = '900 26px Inter, Arial, sans-serif';
-  ctx.fillText('NYC TAXI', 112, 42);
-  ctx.font = '700 15px JetBrains Mono, monospace';
-  ctx.fillText('7Y48 · MEDALLION', 112, 68);
-  ctx.font = '600 13px Inter, Arial, sans-serif';
-  ctx.fillText('$3.00 INITIAL FARE', 112, 90);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  // The decals are mostly seen at grazing angles from the chase camera
-  tex.anisotropy = 16;
-  return tex;
-}
-
-function createNYLicensePlateTexture() {
+function createGoBluePlateTexture() {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 128;
@@ -443,7 +445,7 @@ class ThirdPersonControllerManager {
   }
 
   // =========================================================================
-  // 1. PERSON (SKINNED NYC PEDESTRIAN WITH PLANTED-FOOTSTEP IK GAIT, see pedestrians.js)
+  // 1. PERSON (SKINNED PEDESTRIAN WITH PLANTED-FOOTSTEP IK GAIT, see pedestrians.js)
   // =========================================================================
   createPersonEntity() {
     const root = new THREE.Group();
@@ -501,7 +503,7 @@ class ThirdPersonControllerManager {
     chassisPivot.add(carBodyMesh);
 
     // 3. Michigan license plates on the raked bumpers, tilted to follow the fascias
-    const nyPlateTex = createNYLicensePlateTexture();
+    const nyPlateTex = createGoBluePlateTexture();
     const nyPlateMat = new THREE.MeshStandardNodeMaterial({ map: nyPlateTex, roughness: 0.28 });
     for (const front of [true, false]) {
       const y = spec.plates[front ? 0 : 1];
@@ -917,8 +919,11 @@ class ThirdPersonControllerManager {
     let gx = pos.x;
     let gz = pos.z;
     let near = this.nearColliders(gx, gz, reach);
+    const standing = heli ? this._heliStanding : null;
     for (let i = 0; i < near.length; i++) {
       const c = near[i];
+      // the helicopter flies down into the stadium's bowl, and sits on the roof under its skids
+      if (heli && (isStadium(c) || standing?.has(c))) continue;
       if (buildingContact(c, pos.x, pos.y, pos.z, body, contact)) {
         const { nx, nz, depth } = contact;
         pos.x += nx * depth;
@@ -1224,6 +1229,27 @@ class ThirdPersonControllerManager {
     for (const pedal of b.pedals) pedal.rotation.x = -b.pedalPhase;
   }
 
+  // Where the helicopter's skids come to rest: the highest of the ground (the stadium's bowl inside its wall) and the
+  // roofs under its skids that it was above. The roofs it rests on are kept, so they don't push it aside.
+  helicopterFloor(h, lastY) {
+    const x = h.position.x, z = h.position.z;
+    const bowl = bowlSurface(x, z);
+    let floor = (bowl !== null ? stadiumGround() + bowl : groundHeight(x, z)) + 0.25;
+    const standing = (this._heliStanding ??= new Set());
+    standing.clear();
+    const sn = Math.sin(h.heading), cs = Math.cos(h.heading);
+    for (const c of this.nearColliders(x, z, 4)) {
+      if (isStadium(c) || c.maxY < floor - 0.25) continue;
+      let top = -Infinity;
+      for (const [s, f] of HELI_SKIDS) top = Math.max(top, roofHeightAt(c, x + cs * s + sn * f, z - sn * s + cs * f));
+      // a roof it was above (or just landing on) holds it up; one above it is a wall it flew into
+      if (!Number.isFinite(top) || top + 0.25 > lastY + 0.6) continue;
+      standing.add(c);
+      floor = Math.max(floor, top + 0.25);
+    }
+    return floor;
+  }
+
   updateHelicopter(dt, elapsed) {
     const h = this.entities.helicopter;
     const maxHorizSpeed = 52.0;
@@ -1257,12 +1283,15 @@ class ThirdPersonControllerManager {
 
     h.heading += yawInput * 1.45 * dt;
 
+    const lastY = h.position.y;
     h.position.x += Math.sin(h.heading) * h.speed * dt;
     h.position.z += Math.cos(h.heading) * h.speed * dt;
     h.position.y += h.verticalSpeed * dt;
 
-    // Lamp: the skids rest on the ground wherever it is
-    const floor = groundHeight(h.position.x, h.position.z) + 0.25;
+    // Lamp: the skids rest on the ground wherever it is, on the stadium's field and stands, and on any roof it comes
+    // down on from above
+    let floor = this.helicopterFloor(h, lastY);
+    if (!Number.isFinite(floor)) floor = groundHeight(h.position.x, h.position.z) + 0.25;
     if (h.position.y < floor) {
       this.reportCollision(h, groundCollider, 'ground', h.position.x, floor, h.position.z, 0, 1, 0, -h.verticalSpeed);
     }
@@ -1286,7 +1315,7 @@ class ThirdPersonControllerManager {
 // opens the page again. The taxi's textures are drawn by functions of this file's own, so their source is kept from one
 // version to the next to tell.
 const live = hot(import.meta);
-const texturesNow = [createTaxiDoorDecalTexture, createNYLicensePlateTexture].map(String).join('\n');
+const texturesNow = [createGoBluePlateTexture].map(String).join('\n');
 const texturesBefore = live.data.taxiTextures ?? texturesNow;
 live.data.taxiTextures = texturesNow;
 live.accept((next, { changed }) => texturesNow === texturesBefore

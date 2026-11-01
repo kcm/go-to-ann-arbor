@@ -7,7 +7,7 @@
       "url" : "https://github.com/lampdotdev/newyork"
     },
     {
-      "commit" : "be6932e776980eee55a802c7c665ea434360fa28",
+      "commit" : "d185760fa7bf1bfea2f77a5bbfd13819ebd6f754",
       "name" : "Go To Ann Arbor",
       "url" : "https://github.com/mrubens/go-to-ann-arbor",
       "wish" : "3DF4E397-D414-4837-8390-3F7946A6D12D"
@@ -76,6 +76,36 @@
       "author" : "Ann Arbor Area Transportation Authority (TheRide)",
       "name" : "TheRide GTFS timetable",
       "url" : "https://www.theride.org/business/software-developers"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "Road Centerlines (speed limits)",
+      "url" : "https://a2maps.a2gov.org/a2arcgis/rest/services/RoadsSpeedlimitCrash/MapServer/1"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "Fire Hydrants",
+      "url" : "https://ckan.a2gov.org/dataset/fire-hydrants"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "Park Amenities",
+      "url" : "https://ckan.a2gov.org/dataset/park-amenities"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "Address Points",
+      "url" : "https://ckan.a2gov.org/dataset/address-points"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "Land Use",
+      "url" : "https://ckan.a2gov.org/dataset/land-use"
+    },
+    {
+      "author" : "City of Ann Arbor",
+      "name" : "Historic Districts",
+      "url" : "https://ckan.a2gov.org/dataset/historic-districts"
     }
   ]
 }

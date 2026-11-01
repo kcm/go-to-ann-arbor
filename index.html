@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Slop Ann Arbor</title>
+  <title>Go To Ann Arbor</title>
   <link rel="icon" href="data:," />
   <meta name="description" content="A 3D drive, ride, walk and fly around Ann Arbor, Michigan, built from its real streets, buildings, trees and hills. Remixed from Mr.doob's Slop New York." />
   <!-- Lamp's building blocks for the page (LampAI, LampStore, LampNative), then three.js as Lamp ships it (Web/three) -->
@@ -68,7 +68,7 @@
   <link rel="modulepreload" href="./js/audio-system.js" />
   <link rel="modulepreload" href="./js/main.js" />
   <script type="module" src="./js/main.js"></script>
-  <link rel="stylesheet" href="./css/style.css?v=20261022-repo-link" />
+  <link rel="stylesheet" href="./css/style.css?v=20261031-titlebar" />
 </head>
 <body>
   <!-- Icon sprite (24 × 24 stroke icons, drawn in currentColor) -->
@@ -104,26 +104,25 @@
   <!-- Loading Screen -->
   <div id="loading-overlay" role="status" aria-live="polite">
     <div class="loader">
-      <span class="mta-bullet loader-bullet" aria-hidden="true">A2</span>
-      <div class="loader-title">Slop Ann Arbor</div>
+      <svg class="mta-bullet app-logo loader-bullet" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#13294b"/><circle cx="32" cy="31" r="19" fill="#ffcb05"/><path d="M0 46h64v18H0z" fill="#0b1a33"/><path d="M27.5 46V22.5l1.6-2.4V16l2.9-4 2.9 4v4.1l1.6 2.4V46z" fill="#13294b"/><circle cx="32" cy="27" r="2.3" fill="#ffcb05"/><path d="M29.5 35h5M29.5 40h5" stroke="#ffcb05" stroke-width="1.4"/><path d="M14 46h7v-9h4v9M39 46v-12h6v12M46 46v-7h5v7" fill="#13294b"/><path d="M31 49h2l.6 4h-3.2zM30 56h4l.7 6h-5.4z" fill="#ffcb05"/></svg>
+      <div class="loader-title">Go To Ann Arbor</div>
       <div class="loader-track is-indeterminate" aria-hidden="true"><span id="loading-progress" class="loader-fill"></span></div>
       <div id="loading-status">Loading city code and data...</div>
     </div>
   </div>
 
   <!-- 3D WebGPU Viewport Container -->
-  <main id="canvas-container" aria-label="3D Interactive Slop Ann Arbor Viewport"></main>
+  <main id="canvas-container" aria-label="3D Interactive Go To Ann Arbor Viewport"></main>
 
   <!-- Top-Left: Brand & Renderer Telemetry -->
   <header class="hud hud-top-left">
     <div class="panel brand">
-      <span class="mta-bullet" aria-hidden="true">A2</span>
+      <svg class="mta-bullet app-logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#13294b"/><circle cx="32" cy="31" r="19" fill="#ffcb05"/><path d="M0 46h64v18H0z" fill="#0b1a33"/><path d="M27.5 46V22.5l1.6-2.4V16l2.9-4 2.9 4v4.1l1.6 2.4V46z" fill="#13294b"/><circle cx="32" cy="27" r="2.3" fill="#ffcb05"/><path d="M29.5 35h5M29.5 40h5" stroke="#ffcb05" stroke-width="1.4"/><path d="M14 46h7v-9h4v9M39 46v-12h6v12M46 46v-7h5v7" fill="#13294b"/><path d="M31 49h2l.6 4h-3.2zM30 56h4l.7 6h-5.4z" fill="#ffcb05"/></svg>
       <div class="brand-titles">
         <div class="brand-heading">
-          <h1>Slop Ann Arbor</h1>
-          <a class="repo-link" href="https://github.com/mrdoob/slop-newyork/" target="_blank" rel="noopener noreferrer" aria-label="Slop New York on GitHub (opens in a new tab)">GitHub <span aria-hidden="true">↗</span></a>
+          <h1>Go To Ann Arbor</h1>
+          <a class="repo-link" href="https://github.com/mrubens/go-to-ann-arbor" target="_blank" rel="noopener noreferrer" aria-label="Go To Ann Arbor on GitHub (opens in your browser)">GitHub <span aria-hidden="true">↗</span></a>
         </div>
-        <div class="brand-subtitle">by Mr.doob · three.js · <span id="hud-fps" class="fps-ok">60</span> fps</div>
       </div>
     </div>
   </header>
@@ -268,13 +267,13 @@
     <button id="cam-action" class="pop-item cam-btn" data-camera="action" type="button"><span class="pop-name">Low-Angle Action</span><kbd data-key="Digit6">6</kbd></button>
     <button id="cam-pov" class="pop-item cam-btn" data-camera="pov" type="button"><span class="pop-name">First-Person / Cockpit</span><kbd data-key="Digit7">7</kbd></button>
     <div class="pop-title">Scenic</div>
-    <button id="cam-centralPark" class="pop-item cam-btn" data-camera="centralPark" type="button"><span class="pop-name">The Diag</span></button>
-    <button id="cam-fifthAve" class="pop-item cam-btn" data-camera="fifthAve" type="button"><span class="pop-name">Main Street</span><kbd data-key="Digit8">8</kbd></button>
-    <button id="cam-timesSquare" class="pop-item cam-btn" data-camera="timesSquare" type="button"><span class="pop-name">State &amp; Liberty</span><kbd data-key="Digit9">9</kbd></button>
-    <button id="cam-chryslerGCT" class="pop-item cam-btn" data-camera="chryslerGCT" type="button"><span class="pop-name">Burton Tower &amp; Ingalls Mall</span><kbd data-key="Digit0">0</kbd></button>
-    <button id="cam-observatory" class="pop-item cam-btn" data-camera="observatory" type="button"><span class="pop-name">Atop Burton Tower</span></button>
-    <button id="cam-bryantPark" class="pop-item cam-btn" data-camera="bryantPark" type="button"><span class="pop-name">The Big House</span></button>
-    <button id="cam-waterfront" class="pop-item cam-btn" data-camera="waterfront" type="button"><span class="pop-name">Arb &amp; Huron River</span></button>
+    <button id="cam-diag" class="pop-item cam-btn" data-camera="diag" type="button"><span class="pop-name">The Diag</span></button>
+    <button id="cam-mainStreet" class="pop-item cam-btn" data-camera="mainStreet" type="button"><span class="pop-name">Main Street</span><kbd data-key="Digit8">8</kbd></button>
+    <button id="cam-stateLiberty" class="pop-item cam-btn" data-camera="stateLiberty" type="button"><span class="pop-name">State &amp; Liberty</span><kbd data-key="Digit9">9</kbd></button>
+    <button id="cam-burtonTower" class="pop-item cam-btn" data-camera="burtonTower" type="button"><span class="pop-name">Burton Tower &amp; Ingalls Mall</span><kbd data-key="Digit0">0</kbd></button>
+    <button id="cam-burtonTop" class="pop-item cam-btn" data-camera="burtonTop" type="button"><span class="pop-name">Atop Burton Tower</span></button>
+    <button id="cam-bigHouse" class="pop-item cam-btn" data-camera="bigHouse" type="button"><span class="pop-name">The Big House</span></button>
+    <button id="cam-arbRiver" class="pop-item cam-btn" data-camera="arbRiver" type="button"><span class="pop-name">Arb &amp; Huron River</span></button>
     <button id="cam-drone" class="pop-item cam-btn" data-camera="drone" type="button"><span class="pop-name">Auto-Director Aerial</span></button>
   </div>
 
@@ -286,10 +285,11 @@
 
     <div class="fullmap-header">
       <div class="panel fullmap-title">
-        <span class="mta-bullet" aria-hidden="true">A2</span>
+        <svg class="mta-bullet app-logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#13294b"/><circle cx="32" cy="31" r="19" fill="#ffcb05"/><path d="M0 46h64v18H0z" fill="#0b1a33"/><path d="M27.5 46V22.5l1.6-2.4V16l2.9-4 2.9 4v4.1l1.6 2.4V46z" fill="#13294b"/><circle cx="32" cy="27" r="2.3" fill="#ffcb05"/><path d="M29.5 35h5M29.5 40h5" stroke="#ffcb05" stroke-width="1.4"/><path d="M14 46h7v-9h4v9M39 46v-12h6v12M46 46v-7h5v7" fill="#13294b"/><path d="M31 49h2l.6 4h-3.2zM30 56h4l.7 6h-5.4z" fill="#ffcb05"/></svg>
         <div>
           <h2>Ann Arbor Street Atlas</h2>
           <p id="fullmap-player-info" class="fullmap-subtitle">You are at 5th Ave &amp; 35th St</p>
+          <p class="fullmap-subtitle fullmap-credit">Made from Mr.doob's Slop New York</p>
         </div>
       </div>
       <label class="panel fullmap-search-wrap">
@@ -325,6 +325,9 @@
       <div class="panel fullmap-status">
         <span id="fullmap-hover-info">Click anywhere to teleport &amp; set your GPS route · Drag to pan · Scroll to zoom</span>
       </div>
+      <button id="map-clear-route" class="panel tool-btn map-clear-route hidden" type="button" title="Clear the GPS route">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg><span>Clear route</span>
+      </button>
     </div>
 
     <div class="panel fullmap-legend">
@@ -337,16 +340,16 @@
   </section>
 
 
-<div id="lamp-credit">Based on <a href="https://github.com/mrdoob/slop-newyork" target="_blank" rel="noopener">Slop New York</a> by Mr.doob · <a href="https://lamp.dev/?repo=https://github.com/mrubens/go-to-ann-arbor&amp;commit=be6932e776980eee55a802c7c665ea434360fa28&amp;from=page" target="_blank" rel="noopener">Open in Lamp</a> · <a href="#" id="lamp-remix-open">Remix…</a></div>
+<div id="lamp-credit">Based on <a href="https://github.com/mrdoob/slop-newyork" target="_blank" rel="noopener">Slop New York</a> by Mr.doob · <a href="https://lamp.dev/?repo=https://github.com/mrubens/go-to-ann-arbor&amp;commit=d185760fa7bf1bfea2f77a5bbfd13819ebd6f754&amp;from=page" target="_blank" rel="noopener">Open in Lamp</a> · <a href="#" id="lamp-remix-open">Remix…</a></div>
 <div id="lamp-remix" hidden>
   <div class="lamp-remix-head">Make Go To Ann Arbor yours<button type="button" id="lamp-remix-close" aria-label="Close">×</button></div>
   <p>Say what you'd change. Lamp makes the change and keeps your data.</p>
-  <button type="button" class="lamp-remix-pick">Add snow and rain weather</button><button type="button" class="lamp-remix-pick">Let me drop a pin and return</button><button type="button" class="lamp-remix-pick">Add a Michigan football game day crowd</button>
+  <button type="button" class="lamp-remix-pick">Make it rain and snow around town</button><button type="button" class="lamp-remix-pick">Let me drop a pin and return</button><button type="button" class="lamp-remix-pick">Add a Football Saturday crowd at the Big House</button>
   <textarea id="lamp-remix-ask" rows="3" placeholder="Or say it your way"></textarea>
   <button type="button" id="lamp-remix-go" disabled>Continue with Lamp</button>
   <p class="lamp-remix-note">Opens lamp.dev with your request. Lamp is a free Mac app; it opens a copy of Go To Ann Arbor with your request ready to send.</p>
 </div>
-<script type="application/json" id="lamp-remix-target">{"link":null,"origin":{"commit":"be6932e776980eee55a802c7c665ea434360fa28","repo":"https:\/\/github.com\/mrubens\/go-to-ann-arbor"},"request":"Make an app like Go To Ann Arbor: Explore Ann Arbor, Michigan in 3D on foot, by car, by bike or by helicopter.\n\nThen: {ask}"}</script>
+<script type="application/json" id="lamp-remix-target">{"link":null,"origin":{"commit":"d185760fa7bf1bfea2f77a5bbfd13819ebd6f754","repo":"https:\/\/github.com\/mrubens\/go-to-ann-arbor"},"request":"Make an app like Go To Ann Arbor: Explore Ann Arbor, Michigan in 3D on foot, by car, by bike or by helicopter.\n\nThen: {ask}"}</script>
 <script>
 (function(){var o=document.getElementById('lamp-remix-open'),p=document.getElementById('lamp-remix'),a=document.getElementById('lamp-remix-ask'),g=document.getElementById('lamp-remix-go');
 if(!o||!p||!a||!g)return;var t=JSON.parse(document.getElementById('lamp-remix-target').textContent||'{}');

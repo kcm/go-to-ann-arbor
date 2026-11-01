@@ -862,6 +862,9 @@ const TREE_CELL_SIZE = 200;
 const LOD_NEAR = 105; // full detail within (m)
 const LOD_MID = 420; // coarse cards & branches within; whole-crown cards beyond
 const LOD_HYSTERESIS = 6;
+// The far whole-crown cards are batched in cells this big: from the helicopter thousands of small cells' species
+// meshes were each a draw (in the view and both shadow cascades)
+const FAR_CELL_SIZE = 1000;
 // Draw distance per tier (0 park & plaza, 1 avenue & esplanade, 2 cross-street); at street level everything beyond
 // LOW_CUTOFF is behind the buildings anyway
 const MAX_DIST = [3000, 1600, 950];
@@ -946,6 +949,7 @@ function createTreeField(scene, sites, colliders = []) {
   const pz = new Float32Array(capacity);
   const meshOf = new Int32Array(capacity * 3); // mesh index per level
   const cellOf = new Array(capacity);
+  const farOf = new Array(capacity);
   const tier = new Uint8Array(capacity);
   const lod = new Uint8Array(capacity).fill(255);
 
@@ -998,22 +1002,27 @@ function createTreeField(scene, sites, colliders = []) {
     py[i] = y + 6 * s;
     pz[i] = t.z;
     tier[i] = Math.min(2, t.tier || 0);
-    const key = Math.floor(t.x / TREE_CELL_SIZE) + ',' + Math.floor(t.z / TREE_CELL_SIZE);
-    let cell = cells.get(key);
-    if (!cell) {
-      const cellGroup = new THREE.Group();
-      cellGroup.name = `TreeCell_${key}`;
-      cellGroup.visible = false;
-      group.add(cellGroup);
-      cell = { group: cellGroup, trees: [], meshes: new Map() };
-      cells.set(key, cell);
-    }
-    cell.trees.push(i);
-    cellOf[i] = cell;
+    const cellAt = (size, far) => {
+      const key = (far ? 'far' : '') + Math.floor(t.x / size) + ',' + Math.floor(t.z / size);
+      let cell = cells.get(key);
+      if (!cell) {
+        const cellGroup = new THREE.Group();
+        cellGroup.name = `TreeCell_${key}`;
+        cellGroup.visible = false;
+        group.add(cellGroup);
+        cell = { group: cellGroup, trees: [], meshes: new Map(), far, key };
+        cells.set(key, cell);
+      }
+      cell.trees.push(i);
+      return cell;
+    };
+    const near = cellOf[i] = cellAt(TREE_CELL_SIZE, false);
+    const far = farOf[i] = cellAt(FAR_CELL_SIZE, true);
     const mi = meshIndex[sp];
     const treeTypes = [mi.l0[variant], mi.l1[variant], mi.l2[variant]];
     for (let l = 0; l < 3; l++) {
       const type = treeTypes[l];
+      const cell = l === 2 ? far : near, key = cell.key;
       let index = cell.meshes.get(type);
       if (index === undefined) {
         index = meshes.length;
@@ -1056,7 +1065,7 @@ function createTreeField(scene, sites, colliders = []) {
       for (const mi of cell.meshes.values()) counts[mi] = 0;
       for (const i of cell.trees) {
         const l = lod[i];
-        if (l === 255) continue;
+        if (l === 255 || (l === 2) !== cell.far) continue;
         const mi = meshOf[i * 3 + l];
         const mesh = instanced[mi];
         const c = counts[mi]++;
@@ -1113,6 +1122,7 @@ function createTreeField(scene, sites, colliders = []) {
       if (next !== lod[i]) {
         lod[i] = next;
         dirtyCells.add(cellOf[i]);
+        dirtyCells.add(farOf[i]);
         changed = true;
       }
     }

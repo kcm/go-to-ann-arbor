@@ -67,15 +67,16 @@ async function settled(g) {
 
 // Starts the game: `scenes` its Phaser.Scene classes, the first one started; `pixelArt` true for pixel art (sharp pixels,
 // no smoothing, positions rounded); `physics` Phaser's physics config (Arcade for most games); `background` the color
-// behind everything; `touch` and `keyboard` as game() in lamp-game.js takes them (the touch buttons a phone shows, or
-// false for a game that draws its own; keyboard: false for a game that reads keys itself). `config` is anything more of
+// behind everything; `touch`, `keyboard` and `keyboardHints` as game() in lamp-game.js takes them (the touch buttons a
+// phone shows, or false for a game that draws its own; keyboard: false for a game that reads keys itself;
+// keyboardHints: { leftStick: 'arrows' } for a game whose prompts name the arrow keys). `config` is anything more of
 // Phaser's game config (`render`, `fps`…), never its size, scale, input, audio or loop, which are Lamp's. `snapshot`,
 // `restore`, `busy`, `assetChanged` and `dispose` keep the player's place through a change, as game() takes them; when
 // the game's code runs again for a change, this Phaser.Game goes and the new code's starts. The scenes are
 // made during game()'s init, so the state a game registered (`hot(import.meta).state`) is back by the first scene's init
 // or create, as is what pendingRestore() from lamp-game.js gives, and a game goes straight to where the player was
 // without showing its title.
-export async function phaser({ scenes, pixelArt = false, physics, background = '#000000', touch, keyboard, config = {},
+export async function phaser({ scenes, pixelArt = false, physics, background = '#000000', touch, keyboard, keyboardHints, config = {},
                                snapshot, restore, busy, assetChanged, dispose }) {
     // What lamp-game.js fits to the screen at 1920x1080's shape: Phaser fits its canvas inside it (Phaser's FIT, so a
     // click is read where it lands however big the window is).
@@ -91,7 +92,7 @@ export async function phaser({ scenes, pixelArt = false, physics, background = '
     };
     let g = null;
     return game({
-        renderer, touch, keyboard, sharp: true, flat: true, snapshot, restore, busy, assetChanged,
+        renderer, touch, keyboard, keyboardHints, sharp: true, flat: true, snapshot, restore, busy, assetChanged,
         async dispose() {
             if (dispose) await dispose();
             // Phaser takes a game away at its next step, which a sleeping loop never takes: it goes now.

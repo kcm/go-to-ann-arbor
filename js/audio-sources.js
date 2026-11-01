@@ -140,6 +140,7 @@ class CityAudioSources {
     item.phase = rig.phase;
     item.player = player;
     item.conversation = player ? null : id.conversation || null;
+    item.shout = player ? -1 : id.shout ?? -1;
     const left = rig.feet[0], right = rig.feet[1];
     item.leftX = left.px; item.leftY = left.py; item.leftZ = left.pz;
     item.rightX = right.px; item.rightY = right.py; item.rightZ = right.pz;

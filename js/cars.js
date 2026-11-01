@@ -1217,42 +1217,82 @@ function polygonPlanes(points, margins) {
 
 // Packs per-instance style fields into carState.w (livery 0..7, metallic 0..1, trim 0..3, wheelStyle 0..3).
 // Livery 1 with default options encodes to 1, keeping existing NYPD carState.w = 1 checks compatible.
-function carStyleCode({ livery = 0, metallic = 0, trim = 0, wheel = 0 } = {}) {
-  return (livery & 7) + ((metallic & 1) << 3) + ((trim & 3) << 4) + ((wheel & 3) << 6);
+// Lamp: and the plate (0..15), the row of the plate atlas the car carries
+function carStyleCode({ livery = 0, metallic = 0, trim = 0, wheel = 0, plate = 0 } = {}) {
+  return (livery & 7) + ((metallic & 1) << 3) + ((trim & 3) << 4) + ((wheel & 3) << 6) + ((plate & 15) << 8);
+}
+// The same style on another of the plates
+const withPlate = (style, n) => (style & 255) + ((Math.floor(n) & 15) << 8);
+
+// Lamp: what Ann Arbor drives, by body kind (the sedan stands in for Priuses, Civics, Camrys and the odd Tesla, the
+// SUV for Subaru Outbacks and Foresters, RAV4s and CR-Vs): muted colours, plenty of silver, white, grey, dark blue and
+// green, a few reds; U-M's blue on some of the vans and pickups (the university's maintenance fleet). [hex, metallic]
+const ANN_ARBOR_PAINT = {
+  sedan: [[0xc8ced5, 1], [0xeef0f2, 0], [0x8e949b, 1], [0x4d535a, 1], [0x1f2a3c, 1], [0xbfc5cc, 1], [0x2c3a33, 1],
+    [0x16191d, 1], [0xe9ebee, 1], [0x5d6670, 1], [0x6b2226, 1], [0xa9b0b7, 1], [0x3b4f63, 1], [0xf1f2f3, 0]],
+  suv: [[0x3a4a3d, 1], [0xc3c9cf, 1], [0x5a6168, 1], [0x24344a, 1], [0xeceef0, 0], [0x8b939b, 1], [0x2e3b35, 1],
+    [0x6c7470, 1], [0x1b1f24, 1], [0x4a5a6d, 1], [0xb5bbc1, 1], [0x7b2a2a, 1], [0x5d6b5a, 1], [0xe3e5e7, 1]],
+  minivan: [[0xc9ced3, 1], [0x5a6067, 1], [0xeef0f2, 0], [0x2a3a52, 1], [0x8f969d, 1], [0x3d4740, 1]],
+  pickup: [[0xf0f1f2, 0], [0x9ba2a9, 1], [0x1a1d21, 1], [0x2b3a4f, 1], [0x6a1d20, 0], [0x00274c, 0], [0x4e555c, 1],
+    [0x34433a, 1]],
+  van: [[0xf3f4f5, 0], [0xf3f4f5, 0], [0x00274c, 0], [0xbcc2c8, 1], [0xf0f1f2, 0], [0x00274c, 0], [0x8e959c, 0]],
+  taxi: [[0xc8ced5, 1]]
+};
+// One of them for car number i (or a hash 0..1 times 1000), with its own trim, wheels and plate
+function annArborCar(kind, i) {
+  const list = ANN_ARBOR_PAINT[kind] || ANN_ARBOR_PAINT.sedan;
+  const [hex, metallic] = list[i % list.length];
+  const twoTone = kind === 'suv' && i % 9 === 4; // the odd black-roofed crossover
+  return {
+    hex,
+    style: carStyleCode({ livery: twoTone ? 4 : 0, metallic, trim: (i * 5) % 3, wheel: (i * 7) % 4, plate: (i * 11 + 3) % 16 })
+  };
 }
 
 const _carMaterialCache = new Map();
 let _carPlateTexture;
 
-// One small generated atlas serves every rear plate (3 Empire Gold + 1 Excelsior White), with mipmaps for distant traffic.
+// Lamp: one small generated atlas serves every plate, PLATE_ROWS Michigan plates (the white "Pure Michigan" plate and
+// the blue-lettered "Great Lakes" one, each its own number), with mipmaps for distant traffic.
+const PLATE_ROWS = 16;
 function carPlateTexture() {
   if (_carPlateTexture) return _carPlateTexture;
   const canvas = document.createElement('canvas');
   canvas.width = 128;
-  canvas.height = 256;
+  canvas.height = 64 * PLATE_ROWS;
   const ctx = canvas.getContext('2d');
-  const rows = [
-    { bg: '#f2b718', bar: '#14233c', fg: '#14233c', label: 'KBM-4728' },
-    { bg: '#e8edf2', bar: '#162b4c', fg: '#162b4c', label: 'JTR-8319' },
-    { bg: '#f2b718', bar: '#14233c', fg: '#14233c', label: 'HXL-2506' },
-    { bg: '#f0b416', bar: '#14233c', fg: '#14233c', label: 'T748219C' }
-  ];
-  rows.forEach(({ bg, bar, fg, label }, row) => {
+  // a fixed sequence, so every play shows the same plates: three letters and four digits
+  let seed = 20250917;
+  const next = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const LETTERS = 'ABCDEFGHJKLMNPRSTUVWXYZ';
+  for (let row = 0; row < PLATE_ROWS; row++) {
     const y0 = row * 64;
-    ctx.fillStyle = bg;
+    const lakes = row % 4 === 3;
+    let label = '';
+    for (let k = 0; k < 3; k++) label += LETTERS[Math.floor(next() * LETTERS.length)];
+    label += ' ' + String(1000 + Math.floor(next() * 9000));
+    ctx.fillStyle = '#f4f5f2';
     ctx.fillRect(0, y0, 128, 64);
-    ctx.fillStyle = bar;
-    ctx.fillRect(0, y0, 128, 13);
-    ctx.fillRect(0, y0 + 56, 128, 8);
-    ctx.fillStyle = bg;
-    ctx.font = 'bold 9px sans-serif';
+    if (lakes) {
+      // the lakes' blue water across the bottom
+      const g = ctx.createLinearGradient(0, y0 + 40, 0, y0 + 64);
+      g.addColorStop(0, '#f4f5f2');
+      g.addColorStop(1, '#5d8fc4');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, y0 + 40, 128, 24);
+    }
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('NEW YORK', 64, y0 + 7);
-    ctx.fillStyle = fg;
-    ctx.font = 'bold 21px monospace';
-    ctx.fillText(label, 64, y0 + 35);
-  });
+    ctx.fillStyle = '#123a73';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.fillText('MICHIGAN', 64, y0 + 8);
+    ctx.fillStyle = '#10264d';
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText(label, 64, y0 + 33);
+    ctx.fillStyle = lakes ? '#0e2b57' : '#1f4f94';
+    ctx.font = lakes ? 'bold 9px sans-serif' : 'italic bold 10px serif';
+    ctx.fillText(lakes ? 'GREAT LAKES' : 'Pure Michigan', 64, y0 + 55);
+  }
   _carPlateTexture = new THREE.CanvasTexture(canvas);
   _carPlateTexture.colorSpace = THREE.SRGBColorSpace;
   _carPlateTexture.anisotropy = 16;
@@ -1289,10 +1329,11 @@ function createLoftedCarMaterial(spec, fixedColorHex = null) {
         floor(fract(wCode.div(8.0)).mul(8.0).add(0.5)),
         step(0.5, fract(floor(wCode.div(8.0).add(0.01)).mul(0.5))),
         floor(fract(floor(wCode.div(16.0).add(0.01)).mul(0.25)).mul(4.0).add(0.5)),
-        floor(wCode.div(64.0).add(0.01))
+        floor(fract(floor(wCode.div(64.0).add(0.01)).mul(0.25)).mul(4.0).add(0.5))
       )
     )
   );
+  const vPlate = varying(vertexStage(floor(wCode.div(256.0).add(0.01))));
   const livery = vStyle.x;
   const isMetallic = vStyle.y;
   const trimCode = vStyle.z;
@@ -1486,13 +1527,13 @@ function createLoftedCarMaterial(spec, fixedColorHex = null) {
     const outCol = vec3(color(0x181b1f)).toVar();
 
     // Sample plate texture outside If() so hardware mipmaps + anisotropy filter cleanly without derivative issues
-    const plateVariant = floor(fract(paint.r.mul(7).add(paint.g.mul(13)).add(paint.b.mul(17)).add(isTLC.mul(0.75))).mul(4));
+    const plateVariant = vPlate;
     const isFrontSide = smoothstep(-0.02, 0.02, n.z);
     const plateSignX = mix(float(-0.31), float(0.31), isFrontSide);
     const plateCenterY = mix(float(plateR), float(plateF), isFrontSide);
     const plateUV = vec2(
       clamp(p.x.div(plateSignX).add(0.5), 0.02, 0.98),
-      clamp(p.y.sub(plateCenterY).div(0.115).add(0.5), 0.06, 0.94).add(plateVariant).div(4.0)
+      clamp(p.y.sub(plateCenterY).div(0.115).add(0.5), 0.06, 0.94).add(plateVariant).div(PLATE_ROWS)
     );
     const plateCol = texture(carPlateTexture(), plateUV).rgb;
 
@@ -1532,7 +1573,7 @@ function createLoftedCarMaterial(spec, fixedColorHex = null) {
           const letters = mix(float(0.4), smoothstep(0.15, 0.55, sin(p.z.mul(95.0))), fadeFine(fwZ))
             .mul(band(p.z.sub(doorMid), 0.1, fwZ))
             .mul(band(p.y.sub(0.66), 0.028, fwY));
-          const badgeFg = mix(color(0xffbe14), color(0xeaf4e6), isBoro).mul(ao);
+          const badgeFg = mix(color(0xffbe14), color(0xffcb05), isBoro).mul(ao); // livery 2: the U-M fleet's maize badge
           bCol.assign(mix(mix(bCol, color(0x121417), badge), badgeFg, max(emblem, letters).mul(badge)));
         });
 
@@ -1865,6 +1906,8 @@ export {
   buildCarProxyGeometry,
   createLoftedCarMaterial,
   carStyleCode,
+  annArborCar,
+  withPlate,
   buildLightbarGeometry,
   createLightbarMaterial,
   buildBodyLoft

@@ -303,8 +303,8 @@ class CityAudioSystem {
     const now = this.context.currentTime;
     const crash = kind === 'crash';
     const severity = clamp(options.severity ?? options.intensity ?? 1, 0, 1);
-    const ref = crash ? 4 + severity * 8 : kind === 'trainhorn' ? 60 : kind === 'horn' ? 8 : kind === 'talk' ? 2 : 1.8;
-    const range = crash ? 50 + severity * 110 : kind === 'trainhorn' ? 1200 : kind === 'horn' ? 140 : kind === 'talk' ? 30 : kind === 'footstep' ? 22 : 35;
+    const ref = crash ? 4 + severity * 8 : kind === 'trainhorn' ? 60 : kind === 'horn' ? 8 : kind === 'talk' || kind === 'shout' ? 2 : 1.8;
+    const range = crash ? 50 + severity * 110 : kind === 'trainhorn' ? 1200 : kind === 'horn' ? 140 : kind === 'talk' ? 30 : kind === 'shout' ? 55 : kind === 'footstep' ? 22 : 35;
     if (Math.hypot(source.x - this.listener.x, source.y - this.listener.y, source.z - this.listener.z) > range) return false;
     if (crash || options.priority) {
       // Impacts are immediate, between the 10 Hz ambience updates. Reclaim finished events first, then let
@@ -333,11 +333,11 @@ class CityAudioSystem {
     }
     if (this.events.length >= this.limits.events) return false;
     const emitter = new SpatialEmitter(this.context, this.mix, this.reflections, this.acoustics,
-      ref, kind === 'talk' ? 1.5 : 0, kind === 'horn');
+      ref, kind === 'talk' || kind === 'shout' ? 1.5 : 0, kind === 'horn');
     // Do not fade away the first few milliseconds of a crash: its spatial gain and filtering are ready at onset.
     emitter.update(source, this.listener, now, range, true, crash);
     const voice = playEvent(this.context, this.resources, kind, emitter.input, { seed: source.seed, ...options });
-    this.events.push({ kind, voice, emitter, id: source.id, range, severity, position: { ...source }, follow: kind === 'talk' || kind === 'horn' });
+    this.events.push({ kind, voice, emitter, id: source.id, range, severity, position: { ...source }, follow: kind === 'talk' || kind === 'shout' || kind === 'horn' });
     return true;
   }
 
@@ -453,6 +453,12 @@ class CityAudioSystem {
     this.updatePool(this.sirens, sources.sirens, this.limits.sirens, now, dt, true);
     for (const source of sources.people) {
       const state = this.state(source, now);
+      // a shout when a car comes at them (the pedestrian marks when; heard once)
+      if (state.shout === undefined) state.shout = source.shout;
+      else if (source.shout !== state.shout) {
+        state.shout = source.shout;
+        this.emit('shout', source, { intensity: 0.9, seed: source.seed + source.shout, voiceSeed: source.seed, priority: true });
+      }
       const moved = Math.hypot(source.x - state.x, source.z - state.z);
       if (source.grounded && moved < 3 && Number.isFinite(state.phase)) {
         for (let foot = 0; foot < 2; foot++) {
@@ -497,9 +503,10 @@ class CityAudioSystem {
       if (source.player || source.kind === 'helicopter' || source.kind === 'cyclist') continue;
       const state = this.state(source, now);
       state.stopped = source.blocked ? state.stopped + dt : 0;
-      if (state.stopped > 4 && now > state.horn && now - this.lastHorn > 3) {
-        if (this.emit('horn', source, { intensity: 0.55 })) {
-          state.horn = now + 18 + state.variation * 15;
+      // Ann Arbor drivers wait: a short tap only after a long hold-up, not New York's leaning on the horn
+      if (state.stopped > 12 && now > state.horn && now - this.lastHorn > 15) {
+        if (this.emit('horn', source, { intensity: 0.35 })) {
+          state.horn = now + 60 + state.variation * 40;
           this.lastHorn = now;
         }
       }

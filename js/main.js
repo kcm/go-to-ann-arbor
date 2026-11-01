@@ -1,5 +1,5 @@
 // Lamp's game runtime first: in Lamp's preview it sets the clock and random numbers before anything reads them.
-import { game, hot, save, load, log, input, onInput, label, glyph, pendingRestore, BUTTON, STICK, TRIGGER } from '../lamp-game.js';
+import { game, hot, save, load, log, asset, input, onInput, label, glyph, pendingRestore, BUTTON, STICK, TRIGGER } from '../lamp-game.js';
 import * as THREE from 'three/webgpu';
 import { pass, mrt, output, normalView, positionView, metalness, roughness, vec2, vec3, smoothstep } from 'three/tsl';
 import { ssr } from 'three/addons/tsl/display/SSRNode.js';
@@ -12,6 +12,8 @@ import { buildLandmarks } from './landmarks.js';
 import { buildRailways } from './railways.js';
 import { buildParkedCars } from './parked-cars.js';
 import { buildCityBlocks } from './buildings.js';
+import { setDistricts } from './districts.js';
+import { setRoofShapes } from './houses.js';
 import { buildStreetDetails } from './street-details.js';
 import { createTrafficSystem, createHighwayTraffic } from './traffic.js';
 import { buildRoadPaint } from './road-paint.js';
@@ -27,6 +29,9 @@ import { setupSceneCulling, updateSceneCulling, cullAlso, showShadowStandIns } f
 import { loadTerrain, setOnTerrain, groundHeight } from './terrain.js';
 import { CityAudioSystem } from './audio-system.js';
 import { fetchWeather, createPrecipitation } from './weather.js';
+
+// In its own window on the Mac the top strip is the title bar, which takes the clicks: the top panels sit below it
+if (window.webkit?.messageHandlers?.lampNative && /Mac/.test(navigator.platform) && navigator.maxTouchPoints === 0) document.documentElement.classList.add('mac-window');
 
 // Application setup, shader warm-up and frame loop.
 //
@@ -170,8 +175,19 @@ async function initApp() {
   const landmarkColliders = landmarks.made.colliders;
   markInit('landmarks');
   await showLoadingStage('Generating building footprints and facades...');
-  const blocks = live.keep('blocks', () => cityPart((g) => buildCityBlocks(g, landmarks.made.colliders), { cull: setupSceneCulling }),
-    { inputs: [heights, landmarks] });
+  // house numbers by the front doors (build-addresses.py, the city's Address Points)
+  // the city's land use and historic districts (build-districts.py): building looks and the location label ask them
+  const districtBytes = await asset('data/districts.json');
+  setDistricts(districtBytes ? JSON.parse(new TextDecoder().decode(districtBytes)) : null);
+  const addressBytes = await asset('data/addresses.json');
+  const addresses = addressBytes ? JSON.parse(new TextDecoder().decode(addressBytes)) : null;
+  const gasBytes = await asset('data/gas-stations.json');
+  const gasStations = gasBytes ? JSON.parse(new TextDecoder().decode(gasBytes)) : null;
+  // the roof shapes OpenStreetMap's mappers tagged (build-roof-shapes.py), for the houses that have one
+  const roofBytes = await asset('data/roof-shapes.json');
+  setRoofShapes(roofBytes ? JSON.parse(new TextDecoder().decode(roofBytes)) : null);
+  const blocks = live.keep('blocks', () => cityPart((g) => buildCityBlocks(g, landmarks.made.colliders, addresses, gasStations), { cull: setupSceneCulling }),
+    { inputs: [heights, landmarks], from: ['data/addresses.json', 'data/districts.json', 'data/gas-stations.json', 'data/roof-shapes.json'] });
   const cityBlocks = blocks.made;
   markInit('blocks');
   const allColliders = [...landmarkColliders, ...cityBlocks.colliders, ...boroughs.colliders, ...(cityGrid.colliders || [])];
@@ -179,11 +195,14 @@ async function initApp() {
   await showLoadingStage('Placing trees, streetlights and street furniture...');
   // Lamp: trees, lamps and street furniture were placed on the ground as they were built; the street level under them
   // is set on it here
+  // the city's hydrants and park benches, tables, shelters and courts (build-street-furniture.py)
+  const furnitureBytes = await asset('data/street-furniture.json');
+  const streetFurniture = furnitureBytes ? JSON.parse(new TextDecoder().decode(furnitureBytes)) : null;
   const details = live.keep('streetDetails', () => cityPart((g) => {
-    const made = buildStreetDetails(g, allColliders);
+    const made = buildStreetDetails(g, allColliders, streetFurniture);
     setOnTerrain(g.getObjectByName('ManhattanStreetDetails'));
     return made;
-  }, { cull: setupSceneCulling }), { inputs: [heights, grid, boroughPart, landmarks, blocks] });
+  }, { cull: setupSceneCulling }), { inputs: [heights, grid, boroughPart, landmarks, blocks], from: ['data/street-furniture.json'] });
   const streetDetails = details.made;
   markInit('streetDetails');
   await showLoadingStage('Creating traffic and pedestrian routes...');
@@ -214,7 +233,10 @@ async function initApp() {
   const signsPart = live.keep('shopSigns', () => cityPart((g) => buildShopSigns(g), { cull: setupSceneCulling }), { inputs: [heights] });
   await showLoadingStage('Laying the railroads...');
   // The tracks and the trains on them, stood on the ground where they're built (railways.js)
-  const railPart = live.keep('railways', () => cityPart((g) => buildRailways(g)), { inputs: [heights] });
+  // where streets cross the tracks at grade, with gates (build-rail-crossings.py, OpenStreetMap)
+  const crossingBytes = await asset('data/rail-crossings.json');
+  const railCrossings = crossingBytes ? JSON.parse(new TextDecoder().decode(crossingBytes)) : [];
+  const railPart = live.keep('railways', () => cityPart((g) => buildRailways(g, railCrossings)), { inputs: [heights], from: ['data/rail-crossings.json'] });
   const railways = railPart.made;
   // Cars parked in the lots and along the main streets downtown, solid to the player (parked-cars.js)
   const parkedPart = live.keep('parkedCars', () => cityPart((g) => buildParkedCars(g)), { inputs: [heights] });
@@ -258,7 +280,12 @@ async function initApp() {
     } catch { /* Storage may be disabled or full. */ }
   }
 
-  const cameraSystem = new CameraSystem(renderer.domElement, controllerManager, live.keep('camera', () => CameraSystem.makeCamera()));
+  const keptCamera = live.keep('camera', () => CameraSystem.makeCamera());
+  // a camera that once followed a broken position keeps it: start it again rather than draw nothing
+  if (![keptCamera.position.x, keptCamera.position.y, keptCamera.position.z, keptCamera.quaternion.w].every(Number.isFinite)) {
+    keptCamera.position.set(0, 50, 100); keptCamera.quaternion.identity(); keptCamera.updateMatrixWorld(true);
+  }
+  const cameraSystem = new CameraSystem(renderer.domElement, controllerManager, keptCamera);
   cameraSystem.onResize(1920, 1080);
   const touchControls = new TouchControls(controllerManager);
   const soundButton = document.getElementById('btn-sound');
@@ -503,8 +530,21 @@ async function initApp() {
     selectCamera(CAMERA_PRESETS[(idx + step + n) % n].id, true);
   }
 
+  // How many people are out: few late at night, busiest from mid-afternoon into the evening, and fewer in rain or snow
+  const CROWD_BY_LOOK = { midday: 0.8, golden: 1, twilight: 0.85, midnight: 0.18 };
+  function crowdBusy(timeId) {
+    if (timeId !== 'now') return CROWD_BY_LOOK[timeId] ?? 0.8;
+    const hour = +new Date(Date.now()).toLocaleString('en-US', { timeZone: 'America/Detroit', hour: 'numeric', hourCycle: 'h23' });
+    const byHour = [0.2, 0.14, 0.1, 0.06, 0.06, 0.08, 0.2, 0.35, 0.5, 0.55, 0.6, 0.7, 0.8, 0.8, 0.8, 0.9, 1, 1, 1, 1, 0.95, 0.85, 0.6, 0.35];
+    const w = lightingSystem.weather;
+    const wet = w && /rain|snow|storm|shower|sleet|drizzle/i.test(w.text || '') ? 0.6 : 1;
+    const cold = w && w.tempF != null && w.tempF < 25 ? 0.75 : 1;
+    return byHour[hour] * wet * cold;
+  }
+
   function selectTime(timeId) {
     lightingSystem.applyPreset(timeId, timeId === 'now');
+    trafficSystem.setCrowdBusy?.(crowdBusy(timeId));
     // rain or snow falls only under the real sky
     precipitation.set(timeId === 'now' ? lightingSystem.weather : null);
     colorGrade.applyPreset(lightingSystem.lookId);
@@ -588,6 +628,13 @@ async function initApp() {
     btn.addEventListener('click', () => {
       selectTime(btn.getAttribute('data-time'));
     });
+  });
+
+  // The GitHub link: the app around the page opens it in the browser (a link alone goes nowhere in its window)
+  document.querySelector('.repo-link')?.addEventListener('click', (e) => {
+    if (!window.LampNative?.available) return;
+    e.preventDefault();
+    window.LampNative.call('openRepo').catch(() => log('[github] the app could not open the link'));
   });
 
   // A mouse click mustn't leave the focus on a HUD button, or Space (jump / ascend) and Enter would press it again
@@ -723,13 +770,13 @@ async function initApp() {
         selectCamera('pov', true);
         break;
       case 'Digit8':
-        selectCamera('fifthAve', true);
+        selectCamera('mainStreet', true);
         break;
       case 'Digit9':
-        selectCamera('timesSquare', true);
+        selectCamera('stateLiberty', true);
         break;
       case 'Digit0':
-        selectCamera('chryslerGCT', true);
+        selectCamera('burtonTower', true);
         break;
       case 'KeyV':
         cycleCamera(e.shiftKey ? -1 : 1);

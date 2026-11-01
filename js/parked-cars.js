@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { GEO } from './nyc-geodata.js';
 import { PARKING_LOTS } from './city-config.js';
-import { BODY_SPECS, buildCarGeometry, buildCarProxyGeometry, buildSteerableWheelGeo, createLoftedCarMaterial, carStyleCode } from './cars.js';
+import { BODY_SPECS, buildCarGeometry, buildCarProxyGeometry, buildSteerableWheelGeo, createLoftedCarMaterial, annArborCar } from './cars.js';
 import { groundHeight, groundTilt } from './terrain.js';
 import { curbStalls } from './curb-parking.js';
 
@@ -16,9 +16,6 @@ const NEAR = 70, FAR = 650;
 const LAWN_Y = 0.239;
 
 const KINDS = ['sedan', 'sedan', 'suv', 'sedan', 'suv', 'minivan', 'suv', 'pickup', 'sedan', 'suv', 'van', 'sedan', 'suv', 'pickup'];
-const PAINT = [0xf2f4f7, 0x1c2026, 0xc8d0d8, 0x52575e, 0x9aa2ac, 0x1d3b6c, 0x741d22, 0xe6eaef, 0x363b42, 0x28382e, 0x20385c,
-  0x787670, 0x8f1a1d, 0xbec6cf, 0x14171b];
-
 const hash = (x, z, k = 0) => { const v = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };
 
 function inside(ring, x, z) {
@@ -108,8 +105,9 @@ function buildParkedCars(group) {
   const byKind = {};
   for (const s of spots) {
     const kind = KINDS[Math.floor(hash(s.x, s.z, 4) * KINDS.length)];
-    const col = new THREE.Color(PAINT[Math.floor(hash(s.x, s.z, 5) * PAINT.length)]);
-    const style = carStyleCode({ livery: 0, metallic: hash(s.x, s.z, 6) < 0.6 ? 1 : 0, trim: Math.floor(hash(s.x, s.z, 7) * 3), wheel: Math.floor(hash(s.x, s.z, 8) * 4) });
+    const look = annArborCar(kind, Math.floor(hash(s.x, s.z, 5) * 1000));
+    const col = new THREE.Color(look.hex);
+    const style = look.style;
     const g = groundHeight(s.x, s.z);
     const [pitch, roll] = groundTilt(s.x, s.z, s.yaw);
     const car = { ...s, kind, paint: [col.r, col.g, col.b], style, g, pitch, roll };

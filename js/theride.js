@@ -300,7 +300,7 @@ function createSchedule(data, network) {
 }
 
 // ---- The stop signs ---------------------------------------------------------------------------------------------------
-// TheRide's sign at each stop in the map: a blue plate on a grey pole at the back of the curb, set beside the road
+// A plain bus-stop sign at each stop in the map: a green plate on a grey pole at the back of the curb, set beside the road
 // nearest the stop and facing the traffic that stops there
 function buildStopSigns(stops, network) {
   const { edges } = network;
@@ -328,31 +328,26 @@ function buildStopSigns(stops, network) {
   c.width = 128;
   c.height = 192;
   const g = c.getContext('2d');
-  g.fillStyle = '#1d4f91';
-  g.fillRect(0, 0, 128, 192);
+  // Lamp: a plain city bus-stop plate (no transit agency's logo or colors): green, a bus, "BUS STOP"
   g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, 128, 192);
+  g.fillStyle = '#1f6b45';
   g.fillRect(6, 6, 116, 180);
-  g.fillStyle = '#1d4f91';
-  g.fillRect(10, 10, 108, 172);
   g.fillStyle = '#ffffff';
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.font = '800 26px Inter, Arial, sans-serif';
-  g.fillText('TheRide', 64, 40);
-  g.fillStyle = '#c8202e';
-  g.fillRect(18, 60, 92, 5);
-  g.fillStyle = '#ffffff';
   // a bus seen from the side
-  g.fillRect(26, 86, 76, 40);
-  g.fillStyle = '#1d4f91';
-  for (let i = 0; i < 4; i++) g.fillRect(31 + i * 17, 92, 13, 14);
+  g.fillRect(24, 40, 80, 46);
+  g.fillStyle = '#1f6b45';
+  for (let i = 0; i < 4; i++) g.fillRect(30 + i * 18, 47, 14, 16);
   g.beginPath();
-  g.arc(42, 128, 7, 0, Math.PI * 2);
-  g.arc(86, 128, 7, 0, Math.PI * 2);
+  g.arc(42, 88, 8, 0, Math.PI * 2);
+  g.arc(86, 88, 8, 0, Math.PI * 2);
   g.fill();
   g.fillStyle = '#ffffff';
-  g.font = '800 22px Inter, Arial, sans-serif';
-  g.fillText('BUS STOP', 64, 160);
+  g.font = '800 24px Inter, Arial, sans-serif';
+  g.fillText('BUS', 64, 128);
+  g.fillText('STOP', 64, 156);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;

@@ -8,7 +8,7 @@ const live = hot(import.meta);
 const systems = (live.data.systems ??= new Set());
 
 // Lamp: scenic views placed at street level, which stand on the ground where they are
-const STREET_VIEWS = new Set(['centralPark', 'fifthAve', 'timesSquare', 'chryslerGCT', 'observatory', 'bryantPark', 'waterfront']);
+const STREET_VIEWS = new Set(['diag', 'mainStreet', 'stateLiberty', 'burtonTower', 'burtonTop', 'bigHouse', 'arbRiver']);
 
 // Chase, action, cockpit, fixed-location and aerial cameras, with mouse/touch orbit and zoom.
 
@@ -16,13 +16,13 @@ const CAMERA_PRESETS = [
   { id: 'chase',       name: '3rd-Person Chase',         category: 'follow', fov: 56 },
   { id: 'action',      name: 'Low-Angle Action',         category: 'follow', fov: 60 },
   { id: 'pov',         name: 'First-Person / Cockpit',   category: 'follow', fov: 68 },
-  { id: 'centralPark', name: 'The Diag',       category: 'scenic', fov: 52 },
-  { id: 'fifthAve',    name: 'Main Street',   category: 'scenic', fov: 48 },
-  { id: 'timesSquare', name: 'State & Liberty',  category: 'scenic', fov: 58 },
-  { id: 'chryslerGCT', name: 'Burton Tower & Ingalls Mall', category: 'scenic', fov: 50 },
-  { id: 'observatory', name: 'Atop Burton Tower',   category: 'scenic', fov: 52 },
-  { id: 'bryantPark',  name: 'The Big House',       category: 'scenic', fov: 52 },
-  { id: 'waterfront',  name: 'Arb & Huron River',     category: 'scenic', fov: 46 },
+  { id: 'diag', name: 'The Diag',       category: 'scenic', fov: 52 },
+  { id: 'mainStreet',    name: 'Main Street',   category: 'scenic', fov: 48 },
+  { id: 'stateLiberty', name: 'State & Liberty',  category: 'scenic', fov: 58 },
+  { id: 'burtonTower', name: 'Burton Tower & Ingalls Mall', category: 'scenic', fov: 50 },
+  { id: 'burtonTop', name: 'Atop Burton Tower',   category: 'scenic', fov: 52 },
+  { id: 'bigHouse',  name: 'The Big House',       category: 'scenic', fov: 52 },
+  { id: 'arbRiver',  name: 'Arb & Huron River',     category: 'scenic', fov: 46 },
   { id: 'drone',       name: 'Auto-Director Aerial',     category: 'scenic', fov: 50 }
 ];
 
@@ -267,7 +267,7 @@ class CameraSystem {
         break;
       }
 
-      case 'centralPark': {
+      case 'diag': {
         // The Diag: across the crossing paths toward the Hatcher Graduate Library
         const sway = Math.sin(elapsed * 0.22) * 3.5;
         desiredPos.set(930.0 + sway, 9.0, 220.0);
@@ -275,7 +275,7 @@ class CameraSystem {
         break;
       }
 
-      case 'fifthAve': {
+      case 'mainStreet': {
         // Main Street at William, looking north up downtown's shopfronts
         const sway = Math.sin(elapsed * 0.25) * 1.8;
         desiredPos.set(-27.0 + sway, 5.5, 250.0);
@@ -283,7 +283,7 @@ class CameraSystem {
         break;
       }
 
-      case 'timesSquare': {
+      case 'stateLiberty': {
         // State & Liberty, looking at the Michigan Theater's marquee
         const sway = Math.sin(elapsed * 0.3) * 3.0;
         desiredPos.set(600.0 + sway, 5.0, 40.0);
@@ -291,7 +291,7 @@ class CameraSystem {
         break;
       }
 
-      case 'chryslerGCT': {
+      case 'burtonTower': {
         // Ingalls Mall, looking up at Burton Memorial Tower beside Hill Auditorium
         const sway = Math.cos(elapsed * 0.22) * 2.5;
         desiredPos.set(830.0 + sway, 4.0, 180.0);
@@ -299,7 +299,7 @@ class CameraSystem {
         break;
       }
 
-      case 'observatory': {
+      case 'burtonTop': {
         // From the top of Burton Tower, panning across campus and downtown
         const pan = Math.sin(elapsed * 0.18) * 500.0;
         desiredPos.set(797.0, 44.0, 23.0);
@@ -307,7 +307,7 @@ class CameraSystem {
         break;
       }
 
-      case 'bryantPark': {
+      case 'bigHouse': {
         // High over the Big House's north rim, looking down into the bowl and along the field
         const sway = Math.sin(elapsed * 0.25) * 20.0;
         const g = stadiumGround();
@@ -316,7 +316,7 @@ class CameraSystem {
         break;
       }
 
-      case 'waterfront': {
+      case 'arbRiver': {
         // High over the Nichols Arboretum and the Huron River, looking back at the city
         const drift = Math.sin(elapsed * 0.15) * 60.0;
         desiredPos.set(2350.0, 70.0, -500.0 + drift);

@@ -98,14 +98,32 @@ function buildBigHouse(group, colliders) {
   for (const sz of [-1, 1]) flat(W, 0.2, 0xf2f2ee, 0.03, 0, sz * (L / 2 + EZ));
   // hash marks
   for (let yd = 1; yd < 100; yd++) for (const hx of [-3.08, 3.08]) flat(0.6, 0.1, 0xf2f2ee, 0.03, hx, -L / 2 + (yd / 100) * L);
-  const M = new THREE.Shape();
-  [[-5, -4], [-5, 4], [-3, 4], [0, 0.5], [3, 4], [5, 4], [5, -4], [3, -4], [3, 1], [0, -2.5], [-3, 1], [-3, -4]]
-    .forEach(([x, y], i) => i ? M.lineTo(x, y) : M.moveTo(x, y));
-  const mMesh = new THREE.Mesh(new THREE.ShapeGeometry(M).rotateX(-Math.PI / 2), new THREE.MeshStandardNodeMaterial({ color: 0xffcb05, roughness: 0.8 }));
-  mMesh.position.y = 0.05;
-  mMesh.scale.setScalar(1.4);
-  mMesh.rotation.y = -Math.PI / 2; // reads from the press box on the west side
-  field.add(mMesh);
+  // The Block M: slab serifs on its outer feet and top corners, inner legs standing on serifs of their own, and the
+  // middle V coming down to a point; maize, outlined in blue
+  const BLOCK_M = [[-5, -3.7], [-1.9, -3.7], [-1.9, -2.7], [-2.6, -2.7], [-2.6, 0.9], [0, -2.9], [2.6, 0.9], [2.6, -2.7],
+    [1.9, -2.7], [1.9, -3.7], [5, -3.7], [5, -2.7], [4.3, -2.7], [4.3, 2.7], [5, 2.7], [5, 3.7], [2.4, 3.7], [0, 0.4],
+    [-2.4, 3.7], [-5, 3.7], [-5, 2.7], [-4.3, 2.7], [-4.3, -2.7], [-5, -2.7]];
+  const blockM = (grow) => {
+    const shape = new THREE.Shape();
+    BLOCK_M.forEach(([x, y], i) => {
+      // grow the outline outward by `grow` m (each corner pushed out along the outline's bisector, near enough)
+      const [px, py] = BLOCK_M[(i + BLOCK_M.length - 1) % BLOCK_M.length], [nx, ny] = BLOCK_M[(i + 1) % BLOCK_M.length];
+      let ax = y - py, ay = px - x, bx = ny - y, by = x - nx;
+      const la = Math.hypot(ax, ay) || 1, lb = Math.hypot(bx, by) || 1;
+      ax /= la; ay /= la; bx /= lb; by /= lb;
+      const mx = ax + bx, my = ay + by, d = (mx * ax + my * ay) || 1;
+      const ox = x + (mx / d) * grow, oy = y + (my / d) * grow;
+      i ? shape.lineTo(ox, oy) : shape.moveTo(ox, oy);
+    });
+    return new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2);
+  };
+  for (const [grow, hex, y] of [[0.35, 0x00274c, 0.045], [0, 0xffcb05, 0.05]]) {
+    const mMesh = new THREE.Mesh(blockM(grow), new THREE.MeshStandardNodeMaterial({ color: hex, roughness: 0.8 }));
+    mMesh.position.y = y;
+    mMesh.scale.setScalar(1.4);
+    mMesh.rotation.y = -Math.PI / 2; // reads from the press box on the west side
+    field.add(mMesh);
+  }
   // goalposts: maize uprights on a single post behind each end line
   const postMat = new THREE.MeshStandardNodeMaterial({ color: 0xffcb05, roughness: 0.5 });
   for (const s of [-1, 1]) {
@@ -184,7 +202,7 @@ function buildBigHouse(group, colliders) {
     minX = Math.min(minX, cx + Math.cos(a) * r); maxX = Math.max(maxX, cx + Math.cos(a) * r);
     minZ = Math.min(minZ, cz + Math.sin(a) * r); maxZ = Math.max(maxZ, cz + Math.sin(a) * r);
   }
-  colliders.push({ minX, maxX, minZ, maxZ, maxY: G + 45 });
+  colliders.push({ minX, maxX, minZ, maxZ, maxY: G + 45, stadium: true }); // the helicopter flies into the bowl
   // stood on the ground it was measured from: setOnTerrain leaves it be
   group.userData.terrain = 'set';
 }

@@ -1,16 +1,41 @@
-import { blockAt } from './city-config.js';
+import { blockAt, districtAt, NYC_LANDMARKS } from './city-config.js';
 import { createPedestrianRoutes } from './pedestrian-routes.js';
 import { PersonCrowd, PersonRig, PEDESTRIAN_DIVE_DURATION } from './pedestrians.js';
 import { groundHeight } from './terrain.js';
 
 // Local pedestrian population: connected walks, curb queues, conversations and player avoidance.
 // Traffic supplies crossing permissions and view checks; this system owns the crowd and its animation.
-const NUM_PEDS = 340;
+const NUM_PEDS = 520; // the pool; how many are out at once follows the place, the hour and the frame rate
 const PED_RADIUS = 320;
 const NEAR_RADIUS = 350;
 const PED_SPAWN_DISTANCE = 150;
 const PED_AVOID_INTERVAL = 0.12;
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+
+// How busy each street's sidewalks are: Main, State, South & North University and the Diag the most; downtown and
+// campus side streets less; the neighborhoods hardly at all
+const PLACE_CROWD = { downtown: 0.5, state_street: 0.8, central_campus: 0.7, kerrytown: 0.45, medical_campus: 0.3,
+  north_campus: 0.3, athletic_campus: 0.16, lower_town: 0.1, old_west_side: 0.09, water_hill: 0.07, burns_park: 0.08, geddes: 0.07 };
+const CORE = new Set(['downtown', 'state_street', 'central_campus', 'kerrytown']);
+const STREET_CROWD = [
+  [/\b(Main|State)\b/, 1],
+  [/\b(South|North|East) University\b/, 1],
+  [/\b(Liberty|Washington|Maynard|William|Thayer|Fletcher|Church|Forest|Fourth Ave|Detroit)\b/, 0.8],
+  [/\b(Fifth|Ashley|Division|Huron|Ann|Catherine|Kingsley)\b/, 0.6]
+];
+const DIAG = NYC_LANDMARKS.find((l) => l.id === 'diag') || { x: 900, z: 200 };
+function edgeCrowd(e) {
+  if (e.crowd !== undefined) return e.crowd;
+  const mx = (e.from.x + e.to.x) * 0.5, mz = (e.from.z + e.to.z) * 0.5;
+  const district = districtAt(mx, mz);
+  let w = PLACE_CROWD[district] ?? 0.05;
+  if (CORE.has(district) && e.street) {
+    for (const [re, v] of STREET_CROWD) if (re.test(e.street)) { w = Math.max(w, v); break; }
+  }
+  const diag = Math.hypot(mx - DIAG.x, mz - DIAG.z);
+  if (diag < 260) w = Math.max(w, 1 - (diag / 260) * 0.35);
+  return (e.crowd = w);
+}
 
 function createPedestrianSystem(network, { player, nearEdges, nearSignals, mayCross, walkOn, visible, nearView }) {
   let clock = 0;
@@ -18,6 +43,12 @@ function createPedestrianSystem(network, { player, nearEdges, nearSignals, mayCr
   let hasView = false;
   let pedRange = 0;
   let pedCursor = 0;
+  // How many are out: the share of busy sidewalks around (crowdShare), the hour and weather (busy, from the sky
+  // the player picked) and what the frame rate allows (perf), checked every couple of seconds
+  let busy = 0.9;
+  let crowdShare = 0.5, crowdPeak = 1, crowdCheck = -Infinity;
+  let perf = 1, frameAvg = 1 / 60;
+  let placedCount = 0;
 
   for (const n of network.nodes) {
     n.walkers = []; // pedestrians on its crosswalks
@@ -54,7 +85,8 @@ function createPedestrianSystem(network, { player, nearEdges, nearSignals, mayCr
       waiting: false,
       walkDelay: 0.2 + hash(i, 8) * 1.3,
       walkAt: -1,
-      speed: 1.22 + (i % 5) * 0.1 + hash(i, 3) * 0.08, // preferred walking speed
+      // preferred walking speed; one in fourteen is out for a run
+      speed: i % 14 === 5 ? 2.9 + hash(i, 3) * 0.6 : 1.22 + (i % 5) * 0.1 + hash(i, 3) * 0.08,
       v: 0, // current speed, easing up to it and down to stops
       pause: 0,
       route: null,
@@ -76,6 +108,8 @@ function createPedestrianSystem(network, { player, nearEdges, nearSignals, mayCr
       diveStart: -Infinity,
       diveHeading: 0,
       diveT: 0,
+      reactCheck: 0,
+      shout: -1,
       rig: new PersonRig({
         seed: i * 1.6180339 + 0.13,
         female,
@@ -129,9 +163,12 @@ function createPedestrianSystem(network, { player, nearEdges, nearSignals, mayCr
   function spawnPed(p, rMin, rMax, protectView) {
     for (let attempt = 0; attempt < 10; attempt++) {
       const crosswalk = p.crossesStreets && nearSignals.length > 0 && attempt < 5;
+      const edge = !crosswalk && nearEdges.length > 0 ? nearEdges[Math.floor(Math.random() * nearEdges.length)] : null;
+      // busier sidewalks take more of the people out walking (a quiet street still gets the odd one)
+      if (edge && Math.random() > (edgeCrowd(edge) / crowdPeak) ** 2) continue;
       const ok = crosswalk
         ? crosswalkTrack(nearSignals[Math.floor(Math.random() * nearSignals.length)])
-        : nearEdges.length > 0 && sidewalkTrack(nearEdges[Math.floor(Math.random() * nearEdges.length)]);
+        : !!edge && sidewalkTrack(edge);
       if (!ok) continue;
       const along = (focusX - track.ax) * track.ux + (focusZ - track.az) * track.uz;
       const minT = Math.max(0, along - rMax), maxT = Math.min(track.len, along + rMax);
@@ -338,6 +375,7 @@ function createPedestrianSystem(network, { player, nearEdges, nearSignals, mayCr
       && playerContactTime(p, dir * PED_DODGE_SPEED, PED_DIVE_DISTANCE, true, dodgeTarget, true) === Infinity;
     if (sideDive || forwardDive) {
       p.diveStart = clock;
+      if (hash(p.rig.seed, 9) < 0.75) p.shout = clock; // a shout as they jump clear
       p.diveT = forwardDive ? diveT : p.t;
       const side = Math.sign(dodgeTarget - p.dodge);
       p.diveHeading = forwardDive ? Math.atan2(p.ux * dir, p.uz * dir) : Math.atan2(p.uz * side, -p.ux * side);
@@ -353,6 +391,43 @@ function createPedestrianSystem(network, { player, nearEdges, nearSignals, mayCr
     p.avoidUntil = Math.max(clock + 0.6, p.diveStart + PEDESTRIAN_DIVE_DURATION);
     p.restTime = Math.max(p.restTime, clock + 5);
     p.socialTime = Math.max(p.socialTime, clock + 5);
+  }
+
+  // Seeing the player's car: a car up on their sidewalk sends everyone near running and shouting the other way; one
+  // passing fast close to the curb makes those nearest it step back toward the buildings
+  const PANIC_RANGE = 18;
+  function react(p) {
+    if (!pedRange || p.node || clock < p.reactCheck || clock - p.diveStart < PEDESTRIAN_DIVE_DURATION) return;
+    p.reactCheck = clock + 0.2;
+    const dx = p.x - player.x, dz = p.z - player.z;
+    const speed2 = player.vx * player.vx + player.vz * player.vz;
+    if (speed2 < 4 || dx * dx + dz * dz > PANIC_RANGE * PANIC_RANGE) return;
+    const speed = Math.sqrt(speed2);
+    const ahead = (dx * player.vx + dz * player.vz) / speed; // how far ahead of the car, along its way
+    const across = Math.abs(dx * player.vz - dz * player.vx) / speed;
+    if (ahead < -4) return; // it's gone past
+    // where the car is across this sidewalk, from the person's walking line
+    const side = (player.x - p.x) * p.uz - (player.z - p.z) * p.ux;
+    const onSidewalk = Math.abs(side) < 4 && pedRoutes.canDodge(p, p.dodge + side);
+    if (onSidewalk && ahead > 0 && across < 7) {
+      if (clock < p.avoidUntil && p.avoidSpeed >= PED_ESCAPE_SPEED) return; // already running
+      const away = (dx * p.ux + dz * p.uz) >= 0 ? 1 : -1;
+      if (p.conversation) endConversation(p.conversation);
+      if (!p.resumeDir) p.resumeDir = p.dir;
+      if (away !== p.dir) turnPed(p, away);
+      p.pause = 0;
+      p.avoidSpeed = PED_ESCAPE_SPEED;
+      p.avoidT = p.t + away * escapeRoom(p, away);
+      p.avoidUntil = clock + 2.5 + hash(p.rig.seed, 10);
+      p.restTime = Math.max(p.restTime, clock + 8);
+      p.socialTime = Math.max(p.socialTime, clock + 8);
+      if (hash(p.rig.seed, 11) < 0.5 && clock - p.shout > 4) p.shout = clock;
+    } else if (!onSidewalk && speed > 7 && Math.abs(side) < 4.5 && ahead > -2 && ahead < 14 && !p.dodgeTarget) {
+      const back = -Math.sign(side) * 0.75;
+      if (!dodgeClear(p, p.dodge + back)) return;
+      p.dodgeTarget = p.dodge + back;
+      p.avoidUntil = Math.max(p.avoidUntil, clock + 1.4);
+    }
   }
 
   const walkedNodes = [];
@@ -577,16 +652,40 @@ function createPedestrianSystem(network, { player, nearEdges, nearSignals, mayCr
 
     for (const n of walkedNodes) n.walkers.length = 0;
     walkedNodes.length = 0;
+    // Frames slower than ~45 a second thin the crowd a little at a time; quick frames let it fill back up
+    frameAvg += (Math.min(dt, 0.1) - frameAvg) * Math.min(1, dt * 0.5);
+    perf = clamp(perf + (frameAvg > 1 / 42 ? -0.03 : frameAvg < 1 / 52 ? 0.02 : 0) * dt * 10, 0.35, 1);
+    if (jump || clock >= crowdCheck) {
+      crowdCheck = clock + 2;
+      let sum = 0, length = 0, peak = 0.05;
+      for (const e of nearEdges) {
+        const w = edgeCrowd(e), L = e.span || 1;
+        sum += w * L; length += L; peak = Math.max(peak, w);
+      }
+      crowdShare = length ? sum / length : 0;
+      crowdPeak = peak;
+    }
+    const wanted = Math.round(NUM_PEDS * clamp(crowdShare * 1.5, 0.05, 1) * busy * perf);
+    placedCount = 0;
+    for (const p of peds) if (p.placed) placedCount++;
     let pedBudget = jump ? NUM_PEDS : 6;
     for (let scanned = 0; scanned < NUM_PEDS && pedBudget > 0; scanned++) {
       const p = peds[pedCursor];
       pedCursor = (pedCursor + 1) % NUM_PEDS;
       const d = p.placed ? Math.hypot(p.x - focusX, p.z - focusZ) : Infinity;
+      // too many out for the place and hour: one out of sight goes home
+      if (p.placed && placedCount > wanted && (jump || !nearView(p.x, p.z, 2, PED_SPAWN_DISTANCE))) {
+        if (p.conversation) endConversation(p.conversation);
+        p.placed = false; placedCount--; pedBudget--;
+        continue;
+      }
       if (d <= (jump ? NEAR_RADIUS : PED_RADIUS)) continue;
       pedBudget--;
-      spawnPed(p, jump ? 0 : 60, jump ? NEAR_RADIUS : 280, !jump);
+      if (p.placed) { if (p.conversation) endConversation(p.conversation); p.placed = false; placedCount--; }
+      if (placedCount >= wanted) continue;
+      if (spawnPed(p, jump ? 0 : 60, jump ? NEAR_RADIUS : 280, !jump)) placedCount++;
     }
-    for (const p of peds) if (p.placed) avoidPlayer(p);
+    for (const p of peds) if (p.placed) { react(p); avoidPlayer(p); }
     meet(dt);
     gatherCurbs();
     pedCrowd.begin();
@@ -599,7 +698,11 @@ function createPedestrianSystem(network, { player, nearEdges, nearSignals, mayCr
     pedCrowd.end();
   }
 
-  return { peds, meshes: pedCrowd.meshes, update };
+  // 0 (empty streets) to 1 (a warm evening downtown), from the hour and the weather
+  function setBusy(value) { busy = clamp(value, 0.05, 1); crowdCheck = -Infinity; }
+  const stats = () => ({ out: placedCount, perf: +perf.toFixed(2), share: +crowdShare.toFixed(2), busy });
+
+  return { peds, meshes: pedCrowd.meshes, update, setBusy, stats };
 }
 
 export { createPedestrianSystem };

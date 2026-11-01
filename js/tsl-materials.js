@@ -438,7 +438,7 @@ const evaluateShopInterior = Fn(([uCoord, yInStorey, bayW, floorHNode, seedNode,
   const floorCol = mix(tileCol, boardCol, step(0.5, s2));
   // ceiling: rows of light panels
   const panel = step(0.82, fract(q.z.mul(4.0))).mul(step(0.2, q.x)).mul(step(q.x, 0.8));
-  const ceilCol = mix(color(0xe6e4de), color(0xfff6e4).mul(2.6), panel);
+  const ceilCol = mix(color(0xe6e4de), color(0xfff6e4).mul(1.4), panel);
   // shelves on the walls up to 2.1 m: four boards with goods of every colour between them
   const shelfH = float(2.1).div(roomH);
   const along = mix(q.z, q.x, onBack).mul(mix(depth, roomW, onBack));
@@ -448,8 +448,10 @@ const evaluateShopInterior = Fn(([uCoord, yInStorey, bayW, floorHNode, seedNode,
   const gh = hash2D(goodsCell.add(rid));
   const goodsCol = mix(mix(color(0xb83a32), color(0x2f5d8a), step(0.33, gh)), mix(color(0xe0b545), color(0x3c7a48), step(0.8, gh)), step(0.55, gh));
   const goods = mix(goodsCol, color(0xf0ede6), step(0.85, fract(gh.mul(7.0)))).mul(mix(float(0.7), float(1.0), step(0.25, fract(along.mul(2.6)))));
-  const shelving = mix(goods, color(0x4a4744), board);
-  const hasShelves = step(q.y, shelfH).mul(step(0.25, s3)).mul(float(1.0).sub(isYPlane));
+  // Lamp: goods kept quiet (mostly the shelving's own dark tones), so a shop reads no stronger than the rooms above
+  const quietGoods = mix(vec3(dot(goods, vec3(0.299, 0.587, 0.114))), goods, 0.18).mul(0.55);
+  const shelving = mix(quietGoods, color(0x4a4744), board);
+  const hasShelves = float(0.0); // Lamp: no stocked shelves: the person found them too strong beside the floors above
   const wallWithShelves = mix(wallCol, shelving, hasShelves);
   const shell = mix(mix(wallWithShelves, floorCol, onFloor), ceilCol, onCeil);
 
@@ -684,7 +686,7 @@ function createCurtainWallMaterial(opts = {}) {
     const grime = float(0.56).add(pooledDirt).clamp(0.0, 0.92);
     // Lamp: the shop's room seen through clear glass (evaluateShopInterior)
     const shopRoom = shopRoomHere();
-    const shopBase = mix(cGlass, shopRoom.xyz, float(0.86).mul(float(1.0).sub(pooledDirt.mul(0.5))));
+    const shopBase = mix(cGlass, shopRoom.xyz, float(0.6).mul(float(1.0).sub(pooledDirt.mul(0.5))));
     const upperGlazed = mix(aptRoom.xyz.mul(color(0xb6c6bf)), cGlass, grime);
     const glazedBase = mix(upperGlazed, shopBase, isGroundFloor);
 
@@ -741,7 +743,7 @@ function createCurtainWallMaterial(opts = {}) {
       .mul(float(1.0).sub(partial)).mul(float(1.0).sub(coping));
 
     const shopRoom = shopRoomHere();
-    const shopEmit = shopRoom.xyz.mul(shopRoom.w).mul(0.62);
+    const shopEmit = shopRoom.xyz.mul(shopRoom.w).mul(0.4);
     const emitCol = mix(aptRoom.xyz.mul(aptRoom.w), shopEmit, isGroundFloor);
 
     const viewDir = normalize(cameraPosition.sub(positionWorld));
@@ -999,7 +1001,7 @@ function createPreWarBuildingMaterial(opts = {}) {
 
     const wallTint = mix(mix(cStone, backTint, back), signPaint.xyz, signPaint.w);
     // Trim stone on the band courses, the storefront fascia and the coping capping every wall
-    const trimMix = max(isCornice.mul(0.62).add(isGroundFloor.mul(0.28)), coping.mul(0.8));
+    const trimMix = max(isCornice.mul(0.62), coping.mul(0.8));
     const masonryTint = mix(wallTint, cTrim, trimMix)
       .mul(brickRnd.mul(0.14).add(1.0))
       .mul(brickShiftVec);
@@ -1024,7 +1026,7 @@ function createPreWarBuildingMaterial(opts = {}) {
     const upperGlassBase = mix(aptRoom.xyz.mul(color(0xb6c6bf)), cGlass, upperGrime);
     // Lamp: clear shop glass onto the room behind it
     const shopRoom = shopRoomHere();
-    const shopGlassBase = mix(cGlass, shopRoom.xyz, float(0.86).mul(float(1.0).sub(pooledDirt.mul(0.5))));
+    const shopGlassBase = mix(cGlass, shopRoom.xyz, float(0.6).mul(float(1.0).sub(pooledDirt.mul(0.5))));
     const glassBase = mix(upperGlassBase, shopGlassBase, isGroundFloor);
     const glassCol = mix(glassBase, cityUniforms.uSkyHorizonColor, fresnel.mul(0.52).add(0.08)).mul(recessShade);
 
@@ -1123,7 +1125,7 @@ function createPreWarBuildingMaterial(opts = {}) {
 
     // Lamp: the shop's own lit room (evaluateShopInterior)
     const shopRoom = shopRoomHere();
-    const shopEmit = shopRoom.xyz.mul(shopRoom.w).mul(0.62);
+    const shopEmit = shopRoom.xyz.mul(shopRoom.w).mul(0.4);
 
     const viewDir = normalize(cameraPosition.sub(positionWorld));
     const fresnel = pow(clamp(float(1.0).sub(abs(dot(viewDir, normalWorldGeometry))), 0.0, 1.0), 1.8);

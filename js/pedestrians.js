@@ -101,7 +101,9 @@ const BIND = [bindJoints(false), bindJoints(true)];
 // ============================================================================
 // 2. SKINNED LOFTED BODY GEOMETRY
 // ============================================================================
-const PART = { BODY: 0, LEG: 1, SHOE: 2, ARM: 3, HAND: 4, HEAD: 5, HAIR: 6, LONG_HAIR: 7 };
+const PART = { BODY: 0, LEG: 1, SHOE: 2, ARM: 3, HAND: 4, HEAD: 5, HAIR: 6, LONG_HAIR: 7, PACK: 8 };
+// Two in five carry a backpack (the same pick in the geometry's shader and the clothes' colors)
+const PACK_SHARE = 0.4;
 
 // Superellipse ring around a vertical axis (x across, z to the front `rzF` or back `rzB`); `bump(a)` pushes points out
 function ringY(y, rx, rzF, rzB, cz, n, ex = 2, bump = null, cx = 0) {
@@ -693,6 +695,21 @@ function buildPersonGeometry(detail = 1) {
   }));
   B.loft(longRows, PART.LONG_HAIR, { capEnd: true });
 
+  // A backpack on the upper back, rounded and boxy; folded away inside the chest on those without one
+  const nPack = hi ? 10 : 6;
+  const packRows = [
+    [1.1, 0.1, 0.035, 0.035, -0.15],
+    [1.13, 0.135, 0.06, 0.07, -0.16],
+    [1.28, 0.145, 0.066, 0.078, -0.17],
+    [1.41, 0.135, 0.062, 0.07, -0.175],
+    [1.455, 0.09, 0.035, 0.035, -0.17]
+  ].filter((r, i) => hi || i !== 2).map(([y, rx, rzF, rzB, cz]) => ({
+    pts: ringY(y, rx, rzF, rzB, cz, nPack, 3.2),
+    skin: torsoSkin(y),
+    axis: new THREE.Vector3(0, y, -0.01)
+  }));
+  B.loft(packRows, PART.PACK, { capStart: true, capEnd: true });
+
   // Shoes, heel to toe (the toes bend at the ball of the foot)
   SIDES.forEach((side, k) => {
     const rows = SHOE.filter((r) => keep(r, 4)).map(([z, hw, top, sole]) => ({
@@ -712,6 +729,7 @@ function buildPersonGeometry(detail = 1) {
 // ============================================================================
 // 3. TSL MATERIAL: GPU SKINNING + PROCEDURAL CLOTHES
 // ============================================================================
+const PACK_COLORS = [0x1f2a44, 0x1c1c1e, 0x55585d, 0xb8952a, 0x5e2430, 0x2f4a3a, 0x00274c, 0x3a3a3a];
 const COAT_COLORS = [0x2b3a52, 0x33332f, 0x8a6a44, 0x5a2f2f, 0x4f5238, 0x6a6a66, 0x222024, 0x7d3f22];
 const COAT_COLORS_F = [0x7a2630, 0xb89a72, 0x2e3e5c, 0x1f1d22, 0xc9c1b2, 0x5b6b4a, 0x8c5a7a, 0x3c3c40];
 const SHIRT_COLORS = [0xe8e6e0, 0xb8c4d8, 0xcfc8b8, 0x9aa7b8];
@@ -753,7 +771,10 @@ function createPersonMaterial(pose) {
     const p = attribute('position', 'vec3')
       .add(vec3(extra.x, 0.0, extra.y).mul(info.z.sub(1.0)))
       .add(attribute('femaleDelta', 'vec3').mul(info.y))
-      .add(attribute('hairDelta', 'vec3').mul(hairAmount));
+      .add(attribute('hairDelta', 'vec3').mul(hairAmount))
+      .toVar();
+    const noPack = step(abs(skin.w.sub(PART.PACK)), 0.25).mul(step(PACK_SHARE, fract(sin(info.x.add(83.0).mul(12.9898)).mul(43758.5453))));
+    p.assign(mix(p, vec3(0.0, 1.3, -0.05), noPack));
     const n = attribute('normal', 'vec3');
     const w = skin.z;
     const ia = base.add(int(skin.x).mul(2));
@@ -824,7 +845,11 @@ function createPersonMaterial(pose) {
       shirtCol,
       shirtV
     );
-    const torsoCol = mix(mix(legsCol, jacketCol, hem), skinCol, neck);
+    // backpack straps over the shoulders, front and back
+    const hasPack = step(lane(83.0), PACK_SHARE);
+    const strap = smoothstep(0.016, 0.01, abs(abs(q.x).sub(0.095))).mul(smoothstep(1.12, 1.16, q.y)).mul(hasPack);
+    const packCol = pickColorFromPalette(PACK_COLORS, lane(59.0));
+    const torsoCol = mix(mix(mix(legsCol, jacketCol, hem), packCol.mul(0.7), strap), skinCol, neck);
 
     // Sleeves: cuffs (shirt cuff under a tailored jacket)
     const cuff = smoothstep(0.93, 0.96, along);
@@ -864,7 +889,7 @@ function createPersonMaterial(pose) {
         headCol,
         isPart(partId, PART.HEAD)
       ),
-      hairPartCol,
+      mix(hairPartCol, packCol.mul(float(1.0).sub(smoothstep(0.004, 0.0, abs(q.y.sub(1.33))).mul(0.35))), isPart(partId, PART.PACK)),
       step(PART.HAIR - 0.5, partId)
     );
   })();

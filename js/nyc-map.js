@@ -471,9 +471,8 @@ class NYCMapSystem {
     this.searchHighlight = '';
     this.searchPath = null;
     this.textWidths = new Map();
-    // Start with a waypoint at Times Square / Broadway.
-    const ts = NYC_LANDMARKS.find((l) => l.id === 'timessquare') || { x: 0, z: 0 };
-    this.waypoint = { x: ts.x, z: ts.z, name: 'Times Square & 42nd St' };
+    // No GPS route until a teleport sets one; Clear route on the full map takes it away
+    this.waypoint = null;
 
     // Street names measured before the web font arrived would be spaced for the fallback font: measure & draw again
     if (document.fonts) {
@@ -494,6 +493,11 @@ class NYCMapSystem {
     const zoomOutBtn = document.getElementById('map-zoom-out');
     const centerPlayerBtn = document.getElementById('map-center-player');
     const fullIslandBtn = document.getElementById('map-view-all');
+    this.clearRouteBtn = document.getElementById('map-clear-route');
+    this.clearRouteBtn?.addEventListener('click', () => {
+      this.waypoint = null;
+      this.renderFullMap();
+    });
 
     if (miniCard) {
       miniCard.addEventListener('click', () => this.toggleFullMap(true));
@@ -1089,6 +1093,7 @@ class NYCMapSystem {
   // 2. FULL NEW YORK CITY INTERACTIVE STREET MAP MODAL ([M])
   // =========================================================================
   renderFullMap() {
+    this.clearRouteBtn?.classList.toggle('hidden', !this.waypoint);
     if (!this.fullCtx || !this.fullCanvas || !this.isFullMapOpen) return;
     const ctx = this.fullCtx;
     const dpr = this.fullDpr || 1;

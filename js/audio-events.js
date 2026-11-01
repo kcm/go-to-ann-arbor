@@ -338,7 +338,7 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
   const random = randomSource(options.seed);
   const start = Math.max(ctx.currentTime, finite(options.when, ctx.currentTime));
   const intensity = clamp(finite(options.intensity, 1));
-  const levels = { footstep: 0.22, talk: 0.065, horn: 0.23, trainhorn: 0.5, signal: 0.13, crash: 0.35 };
+  const levels = { footstep: 0.22, talk: 0.065, shout: 0.2, horn: 0.23, trainhorn: 0.5, signal: 0.13, crash: 0.35 };
   if (!Object.hasOwn(levels, kind) || intensity === 0) return { endTime: start, dispose() {} };
   const gain = ctx.createGain();
   gain.gain.value = intensity * levels[kind];
@@ -404,6 +404,15 @@ export function playEvent(ctx, resources, kind, output, options = {}) {
       when = end + 0.065 + random() * 0.13;
       variant = (variant + 1 + Math.floor(random() * (voice.length - 1))) % voice.length;
     }
+  } else if (kind === 'shout') {
+    // the same voice, raised: higher, louder and quick, one or two syllables
+    const identity = randomSource(finite(options.voiceSeed, finite(options.seed, 1)));
+    const voice = resources.syllables[Math.floor(identity() * resources.syllables.length)];
+    const pitch = (0.95 + identity() * 0.1) * 1.22;
+    let when = start;
+    const variant = Math.floor(random() * voice.length);
+    const end = play(voice[variant], when, pitch, 1);
+    if (random() < 0.6) play(voice[(variant + 1) % voice.length], end + 0.03, pitch * 1.06, 0.9);
   } else if (kind === 'horn') {
     play(resources.horns[Math.floor(random() * resources.horns.length)], start, 0.94 + random() * 0.12);
   } else if (kind === 'trainhorn') {

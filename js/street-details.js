@@ -104,7 +104,7 @@ function createWalkSignalMaterial(clock) {
   return mat;
 }
 
-function buildStreetDetails(scene, colliders = []) {
+function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   const group = new THREE.Group();
   group.name = 'ManhattanStreetDetails';
 
@@ -603,25 +603,10 @@ function buildStreetDetails(scene, colliders = []) {
   }
 
   // =========================================================================
-  // 3. CON EDISON ORANGE/WHITE STRIPED STEAM STACKS, NYCDOT SAWHORSE BARRICADES
-  //    & BILLOWING WIND-DRIFTED VOLUMETRIC STEAM CLOUD TRAILS (REFERENCE PHOTO!)
+  // 3. STEAM STACKS & BARRICADES (New York's; none in Ann Arbor, see steamLocations)
   // =========================================================================
-  const steamLocations = [
-    { x: 6.4,   z: 96,   windX: -1.0, windZ: -0.18 }, // 5th Ave & 37th St (Buffer zone clear of green bike lane!)
-    { x: -7.5,  z: 148,  windX: 0.95, windZ: -0.22 }, // 5th Ave near 34th St (Empire State Building)
-    { x: 6.4,   z: 48,   windX: -1.0, windZ: 0.15  }, // 5th Ave & 40th St (NYPL / Bryant Park)
-    { x: -8.0,  z: -18,  windX: 0.92, windZ: -0.20 }, // 5th Ave & 43rd St
-    { x: -206,  z: -32,  windX: 0.95, windZ: 0.22  }, // Broadway / Times Square
-    { x: -228,  z: -98,  windX: 1.0,  windZ: -0.15 }, // 7th Ave & 45th St
-    { x: -102,  z: 22,   windX: -0.9, windZ: 0.20  }, // 6th Ave & Bryant Park
-    { x: 118,   z: -12,  windX: -1.0, windZ: -0.15 }, // Park Ave & 42nd St (Grand Central)
-    { x: 212,   z: -26,  windX: 0.92, windZ: 0.18  }, // Lexington Ave & 42nd St (Chrysler Building)
-    { x: 228,   z: -195, windX: -0.9, windZ: 0.16  }, // Lexington Ave & 51st St
-    { x: -118,  z: -148, windX: 0.95, windZ: -0.18 }, // 6th Ave & 48th St (Rockefeller Center)
-    { x: 6.4,   z: 285,  windX: -0.9, windZ: -0.22 }, // 5th Ave & 26th St (Flatiron)
-    { x: 6.4,   z: 615,  windX: -0.9, windZ: 0.18  }, // 5th Ave & Washington Square
-    { x: -212,  z: 1255, windX: 0.95, windZ: -0.20 }  // One WTC / Financial District
-  ];
+  // Ann Arbor has no Con Edison steam: no striped stacks or steam clouds in the streets
+  const steamLocations = [];
   // (authored on the former compressed grid: carried onto the real streets; the Financial District one by One WTC)
   for (const st of steamLocations) {
     const wtc = LANDMARK_SITES['One World Trade Center'];
@@ -748,10 +733,10 @@ function buildStreetDetails(scene, colliders = []) {
   steamInstancedSprites.count = totalSteamSprites;
   steamInstancedSprites.frustumCulled = false;
   steamInstancedSprites.renderOrder = 2;
-  group.add(steamInstancedSprites);
+  if (totalSteamSprites > 0) group.add(steamInstancedSprites);
 
   // =========================================================================
-  // 4. MTA SUBWAY ENTRANCES WITH GLOWING GREEN GLOBE LAMPS
+  // 4. SUBWAY ENTRANCES (Ann Arbor has none: the list is empty)
   // =========================================================================
   const subwaySites = createSubwayEntrances(colliders, footprints);
   const subwayMatrices = [];
@@ -774,7 +759,7 @@ function buildStreetDetails(scene, colliders = []) {
   }
 
   // =========================================================================
-  // 5. NYC HOT DOG / HALAL FOOD CARTS
+  // 5. STREET FOOD CARTS (none in Ann Arbor)
   // =========================================================================
   // Keep the whole prop on the sidewalk, outside building lots.
   const findPropSite = (x, z, width, depth) => {
@@ -804,18 +789,8 @@ function buildStreetDetails(scene, colliders = []) {
     return null;
   };
 
-  const cartLocations = [
-    [-17, 152],   // Empire State corner
-    [-17, 25],    // NYPL / Bryant Park
-    [-127, 25],   // 6th Ave & 42nd
-    [-202, -28],  // Times Square
-    [-202, -108], // Duffy Square
-    [127, -25],   // Grand Central
-    [237, -25],   // Chrysler Building corner
-    [-17, -148],  // Rockefeller Center
-    [127, -205],  // Seagram Plaza corner
-    [-17, 325]    // Flatiron Plaza
-  ];
+  // (New York's hot dog and halal carts: none in Ann Arbor)
+  const cartLocations = [];
 
   const cartMatrices = [];
   for (const [ox, oz] of cartLocations) {
@@ -832,33 +807,233 @@ function buildStreetDetails(scene, colliders = []) {
   }
 
   // =========================================================================
-  // 6. FIRE HYDRANTS & USPS BLUE MAILBOXES ALONG CURBS (INSTANCED)
+  // 6. FIRE HYDRANTS, PARK BENCHES, TABLES, SHELTERS & COURTS (the city's own maps; build-street-furniture.py)
   // =========================================================================
-  const hydrantPositions = [];
+  const FURN_LAWN = 0.22; // between the sidewalk's top and the park lawn's: what stands on either sits on both
+  // one solid of several colored parts (y from its foot, +x along it), merged into one geometry for one instanced draw
+  const furnPart = (geo, hex, x = 0, y = 0, z = 0, ry = 0, rz = 0) => {
+    if (rz) geo.rotateZ(rz);
+    if (ry) geo.rotateY(ry);
+    geo.translate(x, y, z);
+    const c = new THREE.Color(hex);
+    const n = geo.attributes.position.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return geo;
+  };
+  const fBox = (w, h, d, hex, x, y, z, ry) => furnPart(new THREE.BoxGeometry(w, h, d), hex, x, y + h / 2, z, ry);
+  const fCyl = (r0, r1, h, hex, x, y, z, seg = 10) => furnPart(new THREE.CylinderGeometry(r0, r1, h, seg), hex, x, y + h / 2, z);
+  const fNozzle = (r, len, hex, x, y, z, ry) => furnPart(new THREE.CylinderGeometry(r, r, len, 8), hex, x, y, z, ry, Math.PI / 2);
+  const furnMat = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.1 });
+
+  const RED = 0xb3261e, SILVER = 0xc9ccd0, WOOD = 0x8a5a36, IRON = 0x2b2e32, GREEN = 0x2f4a38, STONE = 0x8d9095;
+  const FURN_SHAPES = {
+    hydrant: mergeGeometries([
+      fCyl(0.17, 0.19, 0.08, RED, 0, 0, 0), fCyl(0.12, 0.13, 0.56, RED, 0, 0.08, 0), fCyl(0.16, 0.16, 0.05, RED, 0, 0.62, 0),
+      fCyl(0.06, 0.13, 0.1, SILVER, 0, 0.67, 0), fCyl(0.03, 0.03, 0.05, SILVER, 0, 0.77, 0, 5),
+      fNozzle(0.045, 0.34, SILVER, 0, 0.45, 0, 0), fNozzle(0.07, 0.2, SILVER, 0, 0.42, 0.1, Math.PI / 2)
+    ]),
+    bench: mergeGeometries([
+      fBox(1.8, 0.05, 0.42, WOOD, 0, 0.42, 0), fBox(1.8, 0.32, 0.04, WOOD, 0, 0.55, -0.22),
+      fBox(0.06, 0.45, 0.46, IRON, -0.78, 0, -0.02), fBox(0.06, 0.45, 0.46, IRON, 0.78, 0, -0.02),
+      fBox(0.06, 0.5, 0.04, IRON, -0.78, 0.42, -0.24), fBox(0.06, 0.5, 0.04, IRON, 0.78, 0.42, -0.24)
+    ]),
+    trash: mergeGeometries([fCyl(0.28, 0.26, 0.88, GREEN, 0, 0, 0, 12), fCyl(0.3, 0.3, 0.06, IRON, 0, 0.88, 0, 12)]),
+    table: mergeGeometries([
+      fBox(1.8, 0.05, 0.76, WOOD, 0, 0.72, 0), fBox(1.8, 0.04, 0.26, WOOD, 0, 0.42, 0.62), fBox(1.8, 0.04, 0.26, WOOD, 0, 0.42, -0.62),
+      fBox(0.08, 0.72, 0.08, IRON, -0.7, 0, 0), fBox(0.08, 0.72, 0.08, IRON, 0.7, 0, 0),
+      fBox(0.08, 0.06, 1.5, IRON, -0.7, 0.36, 0), fBox(0.08, 0.06, 1.5, IRON, 0.7, 0.36, 0)
+    ]),
+    grill: mergeGeometries([fBox(0.09, 0.82, 0.09, IRON, 0, 0, 0), fBox(0.6, 0.24, 0.42, 0x1d1e20, 0, 0.82, 0), fBox(0.64, 0.03, 0.46, 0x4a4c50, 0, 1.06, 0)]),
+    fountain: mergeGeometries([fCyl(0.17, 0.22, 0.82, STONE, 0, 0, 0, 10), fCyl(0.3, 0.2, 0.14, SILVER, 0, 0.82, 0, 12)]),
+    rack: mergeGeometries([-0.6, 0, 0.6].flatMap((x) => [
+      fBox(0.05, 0.8, 0.05, SILVER, x, 0, -0.3), fBox(0.05, 0.8, 0.05, SILVER, x, 0, 0.3), fBox(0.05, 0.05, 0.65, SILVER, x, 0.78, 0)
+    ])),
+    shelter: mergeGeometries([
+      ...[[-3, -2.4], [3, -2.4], [-3, 2.4], [3, 2.4]].map(([x, z]) => fBox(0.18, 2.6, 0.18, 0x6b4a32, x, 0, z)),
+      fBox(7.4, 0.22, 6.0, 0x6b4a32, 0, 2.6, 0),
+      furnPart(new THREE.ConeGeometry(Math.SQRT1_2, 1, 4).rotateY(Math.PI / 4).scale(7.8, 1.3, 6.4), 0x4f3a30, 0, 3.47, 0),
+      fBox(1.8, 0.05, 0.76, WOOD, 0, 0.72, 0), fBox(1.8, 0.04, 0.26, WOOD, 0, 0.42, 0.62), fBox(1.8, 0.04, 0.26, WOOD, 0, 0.42, -0.62),
+      fBox(0.08, 0.72, 0.08, IRON, -0.7, 0, 0), fBox(0.08, 0.72, 0.08, IRON, 0.7, 0, 0)
+    ])
+  };
+  // kinds as build-street-furniture.py numbers them, with their footprints (w along x, d along z)
+  const FURN_KINDS = [['bench', 1.9, 0.6], ['trash', 0.6, 0.6], ['table', 1.9, 1.6], ['grill', 0.7, 0.5],
+    ['fountain', 0.6, 0.6], ['rack', 1.4, 0.8], ['shelter', 7.6, 6.2]];
+  const furnMatrices = Object.fromEntries(Object.keys(FURN_SHAPES).map((k) => [k, []]));
+  const putFurniture = (kind, x, z, yaw, w, d) => {
+    dummy.position.set(x, FURN_LAWN, z);
+    dummy.rotation.set(0, yaw, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    furnMatrices[kind].push(dummy.matrix.clone());
+    const c = Math.abs(Math.cos(yaw)), s = Math.abs(Math.sin(yaw));
+    addFootprint(x, z, w * c + d * s, w * s + d * c, true);
+  };
+
+  // Hydrants: each where the city mapped it, moved out of the street onto the curb's edge when the map's point is a
+  // little off it, and turned with its pumper nozzle toward the nearest street
+  const HY = streetFurniture?.hydrants || [];
+  const curbSearch = [];
+  for (let r = 0.75; r <= 8; r += 0.75) for (let k = 0; k < 12; k++) curbSearch.push([r, (k / 12) * Math.PI * 2]);
+  const towardStreet = (x, z) => {
+    for (const [r, a] of curbSearch) if (r >= 1.5 && !isOnCurbIsland(x + Math.cos(a) * r, z + Math.sin(a) * r, 0)) return a;
+    return 0;
+  };
+  for (let i = 0; i < HY.length; i += 2) {
+    let x = HY[i], z = HY[i + 1];
+    if (!isOnCurbIsland(x, z, 0.35)) {
+      const hit = curbSearch.find(([r, a]) => isOnCurbIsland(x + Math.cos(a) * r, z + Math.sin(a) * r, 0.35));
+      if (!hit) continue;
+      x += Math.cos(hit[1]) * hit[0];
+      z += Math.sin(hit[1]) * hit[0];
+    }
+    // the pumper nozzle points along local +z: turn it to face the street
+    const a = towardStreet(x, z);
+    dummy.position.set(x, 0.2, z);
+    dummy.rotation.set(0, Math.PI / 2 - a, 0);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    furnMatrices.hydrant.push(dummy.matrix.clone());
+    addFootprint(x, z, 0.4, 0.4, true);
+  }
+
+  // Park amenities: benches, trash cans, picnic tables, grills, drinking fountains, bike racks and picnic shelters
+  const AM = streetFurniture?.amenities || [];
+  for (let i = 0; i < AM.length; i += 4) {
+    const x = AM[i], z = AM[i + 1], kind = FURN_KINDS[AM[i + 2]];
+    if (!kind || !blockAt(x, z)) continue; // a point in a street is a slip of the map
+    putFurniture(kind[0], x, z, AM[i + 3], kind[1], kind[2]);
+  }
+  // only the shelters cast shadows: a bench's or a hydrant's is too small to be worth its draws in every cascade
+  for (const k of Object.keys(FURN_SHAPES)) {
+    const inst = addMatrixArrayInstanced(FURN_SHAPES[k], furnMat, furnMatrices[k], k === 'shelter');
+    if (inst && k !== 'shelter') inst.receiveShadow = true;
+  }
+
+  // Courts and fields: tennis, basketball, pickleball and volleyball courts and soccer fields, each painted on its
+  // own surface (OpenStreetMap's pitches), with nets, hoops and goals; laid on the ground's slope as one mesh
+  const CT = streetFurniture?.courts || [];
+  if (CT.length) {
+    const pos = [], col = [];
+    let cx = 0, cz = 0, ux = 1, uz = 0;
+    const tmpC = new THREE.Color();
+    // a flat quad in the court's own frame: a along its length, b across, at height y
+    const quad = (a0, a1, b0, b1, y, hex) => {
+      tmpC.set(hex);
+      const P = (a, b) => [cx + ux * a - uz * b, y, cz + uz * a + ux * b];
+      const p = [P(a0, b0), P(a1, b0), P(a1, b1), P(a0, b1)];
+      for (const k of [0, 2, 1, 0, 3, 2]) { pos.push(...p[k]); col.push(tmpC.r, tmpC.g, tmpC.b); }
+    };
+    const LW = 0.09, LY = FURN_LAWN + 0.045;
+    const line = (a0, b0, a1, b1, hex = 0xf2f2ee) => {
+      // a thin quad from one point to the other
+      const da = a1 - a0, db = b1 - b0, len = Math.hypot(da, db) || 1;
+      const na = (-db / len) * LW / 2, nb = (da / len) * LW / 2;
+      tmpC.set(hex);
+      const P = (a, b) => [cx + ux * a - uz * b, LY, cz + uz * a + ux * b];
+      const p = [P(a0 - na, b0 - nb), P(a1 - na, b1 - nb), P(a1 + na, b1 + nb), P(a0 + na, b0 + nb)];
+      for (const k of [0, 2, 1, 0, 3, 2]) { pos.push(...p[k]); col.push(tmpC.r, tmpC.g, tmpC.b); }
+    };
+    const rect = (a0, a1, b0, b1, hex) => { line(a0, b0, a1, b0, hex); line(a1, b0, a1, b1, hex); line(a1, b1, a0, b1, hex); line(a0, b1, a0, b0, hex); };
+    const arc = (a, b, r, t0, t1, hex, seg = 16) => {
+      for (let k = 0; k < seg; k++) {
+        const s0 = t0 + (t1 - t0) * k / seg, s1 = t0 + (t1 - t0) * (k + 1) / seg;
+        line(a + Math.cos(s0) * r, b + Math.sin(s0) * r, a + Math.cos(s1) * r, b + Math.sin(s1) * r, hex);
+      }
+    };
+    // an upright box (net, post, backboard) in the court's frame
+    const solid = (a, b, h0, la, lb, h, hex) => {
+      tmpC.set(hex);
+      const P = (da, db, y) => [cx + ux * (a + da) - uz * (b + db), y, cz + uz * (a + da) + ux * (b + db)];
+      const A2 = la / 2, B2 = lb / 2, y0 = FURN_LAWN + h0, y1 = y0 + h;
+      const v = [P(-A2, -B2, y0), P(A2, -B2, y0), P(A2, B2, y0), P(-A2, B2, y0), P(-A2, -B2, y1), P(A2, -B2, y1), P(A2, B2, y1), P(-A2, B2, y1)];
+      for (const f of [[0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7], [4, 5, 6, 7]]) {
+        for (const k of [0, 2, 1, 0, 3, 2]) { pos.push(...v[f[k]]); col.push(tmpC.r, tmpC.g, tmpC.b); }
+      }
+    };
+    const net = (half, h = 0.95) => { solid(0, 0, 0, 0.03, half * 2, h, 0x1c1d1f); solid(0, -half, 0, 0.08, 0.08, h + 0.12, 0x3a3d42); solid(0, half, 0, 0.08, 0.08, h + 0.12, 0x3a3d42); };
+    for (let i = 0; i < CT.length; i += 6) {
+      const sport = CT[i];
+      cx = CT[i + 1]; cz = CT[i + 2]; ux = Math.cos(CT[i + 3]); uz = Math.sin(CT[i + 3]);
+      const L = CT[i + 4], W = CT[i + 5], hl = L / 2, hw = W / 2;
+      if (sport === 0) { // tennis: green apron, blue court
+        const s = Math.min(1, (L - 2) / 23.77, (W - 1) / 10.97), a = 11.885 * s, b = 5.485 * s, bs = 4.115 * s, sv = 6.4 * s;
+        quad(-hl, hl, -hw, hw, FURN_LAWN + 0.02, 0x3f6e4c);
+        quad(-a - 0.6, a + 0.6, -b - 0.6, b + 0.6, FURN_LAWN + 0.03, 0x2f5c86);
+        rect(-a, a, -b, b); line(-a, -bs, a, -bs); line(-a, bs, a, bs);
+        line(-sv, -bs, -sv, bs); line(sv, -bs, sv, bs); line(-sv, 0, sv, 0);
+        line(-a, 0, -a + 0.3, 0); line(a, 0, a - 0.3, 0);
+        net(b + 0.9);
+      } else if (sport === 1) { // basketball: blacktop, white lines, a hoop at each end (one on a half court)
+        const full = L >= 20, s = Math.min(1, (L - 1) / (full ? 28 : 14), (W - 1) / 15);
+        const a = (full ? 14 : 7) * s, b = 7.5 * s, kw = 2.45 * s, kl = 5.8 * s, tp = 6.75 * s;
+        quad(-hl, hl, -hw, hw, FURN_LAWN + 0.02, 0x4b4d52);
+        rect(-a, a, -b, b);
+        const ends = full ? [-1, 1] : [1];
+        if (full) { line(0, -b, 0, b); arc(0, 0, 1.8 * s, 0, Math.PI * 2, 0xf2f2ee, 20); }
+        for (const e of ends) {
+          const base = e * a, k = base - e * kl;
+          rect(Math.min(base, k), Math.max(base, k), -kw, kw);
+          arc(k, 0, 1.8 * s, e > 0 ? Math.PI / 2 : -Math.PI / 2, e > 0 ? Math.PI * 1.5 : Math.PI / 2, 0xf2f2ee, 10);
+          const rim = base - e * 1.6 * s;
+          arc(rim, 0, tp, e > 0 ? Math.PI / 2 + 0.25 : -Math.PI / 2 + 0.25, e > 0 ? Math.PI * 1.5 - 0.25 : Math.PI / 2 - 0.25, 0xf2f2ee, 18);
+          solid(base + e * 0.4, 0, 0, 0.14, 0.14, 3.2, 0x3a3d42); // post
+          solid(base - e * 0.9, 0, 2.9, 0.06, 1.8, 1.05, 0xe9e9e6); // backboard
+          solid(base - e * 1.15, 0, 3.05, 0.5, 0.5, 0.03, 0xe06a22); // rim
+          solid(base - e * 0.15, 0, 3.05, 1.1, 0.12, 0.08, 0x3a3d42); // arm
+        }
+      } else if (sport === 2) { // pickleball
+        const s = Math.min(1, (L - 1) / 13.41, (W - 1) / 6.1), a = 6.705 * s, b = 3.05 * s, kz = 2.13 * s;
+        quad(-hl, hl, -hw, hw, FURN_LAWN + 0.02, 0x3d6b52);
+        quad(-a - 0.4, a + 0.4, -b - 0.4, b + 0.4, FURN_LAWN + 0.03, 0x2e5f8c);
+        rect(-a, a, -b, b); line(-kz, -b, -kz, b); line(kz, -b, kz, b);
+        line(-a, 0, -kz, 0); line(kz, 0, a, 0);
+        net(b + 0.3, 0.88);
+      } else if (sport === 3) { // sand volleyball
+        const s = Math.min(1, (L - 1) / 16, (W - 1) / 8), a = 8 * s, b = 4 * s;
+        quad(-hl, hl, -hw, hw, FURN_LAWN + 0.02, 0xd8c28e);
+        rect(-a, a, -b, b, 0x2f6fb0);
+        solid(0, 0, 1.4, 0.03, b * 2 + 0.6, 1.0, 0x1c1d1f);
+        solid(0, -b - 0.5, 0, 0.1, 0.1, 2.5, 0x8d9095); solid(0, b + 0.5, 0, 0.1, 0.1, 2.5, 0x8d9095);
+      } else if (sport === 4 && L > 30) { // soccer: the field's lines on its grass, a goal at each end
+        const a = hl - 1.5, b = hw - 1.5, pd = Math.min(16.5, L * 0.15), pw = Math.min(20.15, b * 0.6), gw = Math.min(3.66, b * 0.18);
+        quad(-hl, hl, -hw, hw, FURN_LAWN + 0.015, 0x5a8a40);
+        rect(-a, a, -b, b); line(0, -b, 0, b); arc(0, 0, Math.min(9.15, b * 0.27), 0, Math.PI * 2, 0xf2f2ee, 24);
+        for (const e of [-1, 1]) {
+          const g = e * a, p = g - e * pd;
+          rect(Math.min(g, p), Math.max(g, p), -pw, pw);
+          solid(g + e * 0.6, -gw, 0, 0.1, 0.1, 2.44 * Math.min(1, b / 30), 0xf4f4f2);
+          solid(g + e * 0.6, gw, 0, 0.1, 0.1, 2.44 * Math.min(1, b / 30), 0xf4f4f2);
+          solid(g + e * 0.6, 0, 2.44 * Math.min(1, b / 30), 0.1, gw * 2 + 0.1, 0.1, 0xf4f4f2);
+        }
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array((pos.length / 3) * 2), 2));
+    g.computeVertexNormals();
+    const courtMat = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.85 });
+    courtMat.polygonOffset = true;
+    courtMat.polygonOffsetFactor = -2;
+    courtMat.polygonOffsetUnits = -4;
+    const courts = new THREE.Mesh(g, courtMat);
+    courts.name = 'ParkCourts';
+    courts.receiveShadow = true;
+    group.add(courts);
+  }
+
+  // USPS blue mailboxes along the curbs
   const mailboxPositions = [];
   for (const ave of AVENUES) {
     for (let row = 0; row < STREETS.length - 1; row++) {
       const zMid = (STREETS[row].z + STREETS[row + 1].z) * 0.5;
-      const h1 = [ave.x - ave.width * 0.5 - 0.8, zMid - 16];
-      const h2 = [ave.x + ave.width * 0.5 + 0.8, zMid + 16];
       const mb = [ave.x + ave.width * 0.5 + 1.2, zMid - 22];
-      if (isOnSidewalk(h1[0], h1[1], 0.45)) hydrantPositions.push(h1);
-      if (isOnSidewalk(h2[0], h2[1], 0.45)) hydrantPositions.push(h2);
       if (isOnSidewalk(mb[0], mb[1], 0.45)) mailboxPositions.push(mb);
     }
   }
-
-  const hydrantMat = new THREE.MeshStandardNodeMaterial({ color: 0xb8241e, roughness: 0.5, metalness: 0.4 });
-  const hydrantInst = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.26, 0.85, 8), hydrantMat, hydrantPositions.length);
-  hydrantPositions.forEach(([hx, hz], i) => {
-    dummy.position.set(hx, 0.64, hz);
-    dummy.rotation.set(0, 0, 0);
-    dummy.scale.set(1, 1, 1);
-    dummy.updateMatrix();
-    hydrantInst.setMatrixAt(i, dummy.matrix);
-  });
-  hydrantInst.instanceMatrix.needsUpdate = true;
-  group.add(hydrantInst);
 
   const uspsMat = new THREE.MeshStandardNodeMaterial({ color: 0x183c7a, roughness: 0.45, metalness: 0.35 });
   const mailboxInst = new THREE.InstancedMesh(new THREE.BoxGeometry(0.65, 1.25, 0.65), uspsMat, mailboxPositions.length);

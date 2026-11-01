@@ -542,13 +542,12 @@ function createLoftedBusMaterial() {
   const legacyLivery = mix(mix(mtaWhite, color(0x0055b3), blueStripe), color(0x00a4e4), cyanRibbon);
 
   const skirt = covAt(0.415, p.y, invY);
-  // Lamp: TheRide's livery (Ann Arbor): white below, light blue over the top half and round the destination sign, a red
-  // pinstripe between them and a navy band above the black skirt (the New York liveries above are no longer drawn)
+  // Lamp: plain city-bus colors, no transit agency's livery: white, a pale gray top half and a dark green band above
+  // the black skirt (the New York liveries above are no longer drawn)
   const shell = max(side, max(front, rear));
   const upperHalf = one.sub(covAt(1.2, p.y, invY)).mul(shell);
-  let rideLivery = mix(color(0xf1f3f5), color(0x58aee0), upperHalf);
-  rideLivery = mix(rideLivery, color(0xc8202e), band(p.y.sub(1.165), 0.028, invY).mul(shell));
-  rideLivery = mix(rideLivery, color(0x173a6e), band(p.y.sub(0.56), 0.14, invY).mul(max(side, rear)));
+  let rideLivery = mix(color(0xf1f3f5), color(0xd6dade), upperHalf);
+  rideLivery = mix(rideLivery, color(0x2a6a4a), band(p.y.sub(0.56), 0.14, invY).mul(max(side, rear)));
   const livery = mix(rideLivery, color(0x181c22), skirt).mul(shadeY);
 
   // Front MTA circular badge, SBS front lettering band, wheelchair icon & front/rear NY license plates

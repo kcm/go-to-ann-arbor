@@ -36,6 +36,10 @@ import { GEO } from './nyc-geodata.js';
 import { REAL_BUILDINGS } from './building-geodata.js';
 import { createBuildingFootprints } from './building-footprints.js';
 import { buildHouses } from './houses.js';
+import { buildChurches, churchPlan } from './churches.js';
+import { log } from '../lamp-game.js';
+import { buildGasStations, canopyFootprints, insideCanopy } from './gas-stations.js';
+import { landUseAt, historicDistrictAt, LAND_USE } from './districts.js';
 import { groundHeight } from './terrain.js';
 import { polygonContains, polygonBoxOverlaps } from './building-collision.js';
 import { pavedPlazaRects, parkTreeSites, sidewalkBlocks } from './city-grid.js';
@@ -213,7 +217,7 @@ function createHouseRoofs(items) {
   return group;
 }
 
-function buildCityBlocks(scene, landmarkColliders = []) {
+function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasStations = null) {
   const group = new THREE.Group();
   group.name = 'ManhattanCityBlocks';
   const colliders = [];
@@ -442,21 +446,48 @@ function buildCityBlocks(scene, landmarkColliders = []) {
   const surveyedBuckets = materials.map(() => []);
   const detailsToPlace = [];
   const houseRecords = [];
+  const churches = [];
+  // Lamp: a gas station's canopy the survey drew as a building is drawn as a canopy (gas-stations.js) instead
+  const canopies = canopyFootprints(gasStations);
   for (const b of surveyedBuildings) {
+    if (b.height < 10 && insideCanopy(canopies, b.cx, b.cz)) continue;
     const rand = mulberry32(Math.round(b.cx * 31 + b.cz * 17));
     const tone = rand();
     // Lamp: houses, garages and sheds are drawn as houses (houses.js): siding, windows, a door, a pitched roof
     const span = (b.maxX - b.minX) * (b.maxZ - b.minZ);
+    // Lamp: a sizeable building on a religious parcel is drawn as a church (churches.js): gable, bell tower, spire
+    const plan = (b.kind || 1) !== 5 && span > 150 && b.height >= 7 && b.height < 40
+      && landUseAt(b.cx, b.cz) === LAND_USE.RELIGIOUS ? churchPlan(b) : null;
+    if (plan) {
+      let ground = groundHeight(b.cx, b.cz);
+      for (const polygon of b.polygons) for (const p of polygon.outer) ground = Math.min(ground, groundHeight(p.x, p.z));
+      b.ground = ground;
+      churches.push({ ...b, tone, ground, plan });
+      const detail = { cx: b.cx, cz: b.cz, minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ, cornices: [],
+        waterTowers: [], hvacUnits: [], fireEscapes: [], awnings: [], scaffoldSheds: [], footprints: [] };
+      for (const polygon of b.polygons) {
+        const xs = polygon.outer.map((p) => p.x), zs = polygon.outer.map((p) => p.z);
+        colliders.push({ minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs),
+          minY: ground, maxY: ground + b.height + 0.22, polygon });
+        detail.footprints.push({ h: b.height + 0.22, pts: polygon.outer, holes: polygon.holes });
+      }
+      quadtree.insert(detail);
+      allBlocks.push(detail);
+      continue;
+    }
     const smallShed = span < 70 && b.height < 6;
     if (((b.kind || 1) === 1 && b.height < 14 && span < 900) || smallShed) {
       let ground = groundHeight(b.cx, b.cz);
       for (const polygon of b.polygons) for (const p of polygon.outer) ground = Math.min(ground, groundHeight(p.x, p.z));
       b.ground = ground;
-      houseRecords.push({ ...b, tone, ground, garage: smallShed && (b.kind || 1) !== 1 });
+      const record = { ...b, tone, ground, garage: smallShed && (b.kind || 1) !== 1 };
+      houseRecords.push(record);
       for (const polygon of b.polygons) {
         const xs = polygon.outer.map((p) => p.x), zs = polygon.outer.map((p) => p.z);
-        colliders.push({ minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs),
-          minY: ground, maxY: ground + b.height + 0.22, polygon });
+        const collider = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs),
+          minY: ground, maxY: ground + b.height + 0.22, polygon };
+        record.collider ||= collider; // houses.js gives it its roofs' shapes, for the helicopter to land on
+        colliders.push(collider);
       }
       allBlocks.push({ cx: b.cx, cz: b.cz, minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ, cornices: [],
         waterTowers: [], hvacUnits: [], fireEscapes: [], awnings: [], scaffoldSheds: [],
@@ -466,12 +497,18 @@ function buildCityBlocks(scene, landmarkColliders = []) {
     // Lamp: Ann Arbor's survey says what each building is (1 house or apartments, 2 shops, 3 offices, 4 public) and
     // who owns it (5 the University, 6 the city, county, schools or federal government), not when it was built
     const kind = b.kind || 1;
-    const mat = kind === 1 ? (b.height < 13 ? (tone < 0.18 ? 1 : 5 + Math.floor(rand() * 3)) : (tone < 0.7 ? 1 : 0))
+    let mat = kind === 1 ? (b.height < 13 ? (tone < 0.18 ? 1 : 5 + Math.floor(rand() * 3)) : (tone < 0.7 ? 1 : 0))
       : kind === 2 ? (b.height < 16 ? (tone < 0.65 ? 1 : 0) : (tone < 0.5 ? 2 : 3))
         : kind === 3 ? (b.height < 14 ? (tone < 0.5 ? 1 : 3) : (tone < 0.6 ? 2 : 4))
           : kind === 5 ? (b.height > 30 && tone < 0.45 ? 2 : tone < 0.62 ? 8 : 9)
             : kind === 6 ? (tone < 0.6 ? 10 : 9)
               : (b.height < 40 ? (tone < 0.55 ? 1 : 0) : (tone < 0.5 ? 0 : 3));
+    // Lamp: the city's land use and historic districts: old brick and stone in a historic district (the University's
+    // own buildings keep theirs), stone or brick for churches, plain tan brick for industry and research
+    const use = landUseAt(b.cx, b.cz);
+    if (kind !== 5 && historicDistrictAt(b.cx, b.cz) && b.height < 30) mat = tone < 0.68 ? 1 : 0;
+    else if (use === LAND_USE.RELIGIOUS && kind !== 5) mat = tone < 0.5 ? 0 : 1;
+    else if (use === LAND_USE.INDUSTRY && kind !== 5 && b.height < 20) mat = tone < 0.7 ? 10 : 3;
     // Lamp: the building stands on the lowest ground under its outline (terrain.js), and its details with it
     let ground = groundHeight(b.cx, b.cz);
     for (const polygon of b.polygons) for (const p of polygon.outer) ground = Math.min(ground, groundHeight(p.x, p.z));
@@ -508,7 +545,9 @@ function buildCityBlocks(scene, landmarkColliders = []) {
   }
   // Lamp: Ann Arbor's houses wear pitched roofs: the survey's height is the ridge, so the walls stop at the eaves
   const roofItems = [];
-  for (let i = 5; i < surveyedBuckets.length; i++) {
+  // (only the house materials 5..7: the University's, the city's and industry's buildings keep flat roofs, whose cornices
+  // and rooftop plant stand at the survey's height, so a lowered wall left them floating over park buildings)
+  for (let i = 5; i <= 7; i++) {
     surveyedBuckets[i] = surveyedBuckets[i].map((r) => {
       const roof = houseRoof(r);
       if (!roof) return r;
@@ -517,7 +556,13 @@ function buildCityBlocks(scene, landmarkColliders = []) {
     });
   }
   if (roofItems.length) group.add(createHouseRoofs(roofItems));
-  if (houseRecords.length) group.add(buildHouses(houseRecords));
+  if (houseRecords.length) group.add(buildHouses(houseRecords, addresses));
+  if (churches.length) { group.add(buildChurches(churches)); log(`[churches] ${churches.length}`); }
+  if (canopies.length || (gasStations && gasStations.canopies)) {
+    const gas = buildGasStations(gasStations);
+    group.add(gas.group);
+    colliders.push(...gas.colliders);
+  }
   surveyedBuckets.forEach((items, i) => {
     if (!items.length) return;
     group.add(createBuildingFootprints(materials[i], items, i < 2 || i >= 5 ? b => nearbyReserves(b, 2) : undefined));

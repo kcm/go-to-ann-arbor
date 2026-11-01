@@ -19,6 +19,12 @@ The wish itself, to open in [Lamp](https://lamp.dev) and change, is on the [main
 - Uses [Urban Tree Canopy](https://a2maps.a2gov.org/a2arcgis/rest/services/NaturalFeatures/MapServer/10) by City of Ann Arbor
 - Uses [Current weather at Ann Arbor Municipal Airport (KARB)](https://www.weather.gov/documentation/services-web-api) by National Weather Service (NOAA), LicenseRef-US-Government-Public-Domain
 - Uses [TheRide GTFS timetable](https://www.theride.org/business/software-developers) by Ann Arbor Area Transportation Authority (TheRide)
+- Uses [Road Centerlines (speed limits)](https://a2maps.a2gov.org/a2arcgis/rest/services/RoadsSpeedlimitCrash/MapServer/1) by City of Ann Arbor
+- Uses [Fire Hydrants](https://ckan.a2gov.org/dataset/fire-hydrants) by City of Ann Arbor
+- Uses [Park Amenities](https://ckan.a2gov.org/dataset/park-amenities) by City of Ann Arbor
+- Uses [Address Points](https://ckan.a2gov.org/dataset/address-points) by City of Ann Arbor
+- Uses [Land Use](https://ckan.a2gov.org/dataset/land-use) by City of Ann Arbor
+- Uses [Historic Districts](https://ckan.a2gov.org/dataset/historic-districts) by City of Ann Arbor
 
 Map data is ODbL-1.0: it stays under that license, credited, in this remix.
 
