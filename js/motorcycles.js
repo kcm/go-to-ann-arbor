@@ -19,6 +19,9 @@ const MOTO_SPECS = {
   // quiet ones that keep to the curb side of the lane at a cyclist's pace (traffic's `curb`), the hoverboard's two
   // wheels side by side (`side` out from the middle)
   bicycle: { rf: 0.34, rr: 0.34, wb: 1.04, wf: 0.035, wr: 0.035, wheel: 'wire', headY: 0.98, mass: 95, quiet: true, curbSpeed: 5.6, paints: [0x1f5fa8, 0x2f6b3a, 0xb22222, 0x111111, 0xd8d8d8, 0xe0a91c] },
+  // a commuter e-bike: a bicycle with a battery on its down tube and a motor in the back hub, fenders and a rack,
+  // quicker than a bicycle at the curb
+  ebike: { rf: 0.35, rr: 0.35, wb: 1.12, wf: 0.05, wr: 0.05, wheel: 'wire', headY: 1.0, mass: 115, quiet: true, curbSpeed: 6.7, paints: [0x2b2f36, 0x3d5a80, 0xe9e9e6, 0x2f6b3a, 0x8c2f39, 0xd9a441] },
   escooter: { rf: 0.11, rr: 0.11, wb: 0.84, wf: 0.055, wr: 0.055, wheel: 'disc', headY: 1.02, mass: 92, quiet: true, curbSpeed: 5, paints: [0x2f9e44, 0x111111, 0xe8e8e8, 0x1c7ed6] },
   hoverboard: { rf: 0.085, rr: 0.085, wb: 0, side: 0.27, wf: 0.07, wr: 0.07, wheel: 'disc', headY: 0.14, mass: 85, quiet: true, curbSpeed: 3.8, paints: [0x111111, 0xd6336c, 0x1971c2, 0xe8e8e8, 0x7048e8] }
 };
@@ -36,7 +39,6 @@ for (const [name, s] of Object.entries(MOTO_SPECS)) {
 // Plain colours of the parts that aren't painted
 const BLACK = 0x16181b, TIRE = 0x101112, METAL = 0x5d6268, CHROME = 0xc9ced4, SEAT = 0x1c1c1e, GLASS = 0x2a3238;
 const ALU = 0x9ea4aa, GOLD = 0xc49a35, CARBON = 0x222326;
-const LEATHER = 0x18191c, JEANS = 0x2c3a52, BOOT = 0x141414, GLOVE = 0x1a1a1a;
 const PAINT = { paint: 1, rough: 0.22, metal: 0.15 }, SHINY = { metal: 1, rough: 0.18 }, DARKMETAL = { metal: 0.6, rough: 0.4 };
 
 // One part: its geometry, colour and finish. paint 1 takes the bike's paint; lamp 1 is a headlamp, 2 a tail lamp.
@@ -97,7 +99,7 @@ function loftGeometry(stations, n, e) {
   return g;
 }
 
-function makeBuilder(detail, wheels = true, riders = 'with') {
+function makeBuilder(detail, wheels = true) {
   const parts = [];
   const seg = detail ? 12 : 6;
   const add = (geo, hex, opts) => parts.push(finish(geo, hex, opts));
@@ -112,7 +114,7 @@ function makeBuilder(detail, wheels = true, riders = 'with') {
     return geo;
   };
   const len = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-  let bodyOn = riders !== 'only', riderOn = riders !== 'without';
+  const bodyOn = true;
   const b = {
     parts,
     get on() { return bodyOn; },
@@ -156,19 +158,6 @@ function makeBuilder(detail, wheels = true, riders = 'with') {
         add(place(t, x + sx * w / 2, y, z), hex, opts);
       }
     },
-    // a limb of the rider, rounded at both ends
-    limb(a, b2, r, hex, opts) {
-      if (!riderOn) return;
-      const g = new THREE.CapsuleGeometry(r, Math.max(0.01, len(a, b2)), 2, Math.max(5, seg >> 1));
-      add(along(g, a, b2), hex, opts);
-    },
-    riderBlob(sx, sy, sz, x, y, z, hex, opts, rx = 0) {
-      if (!riderOn) return;
-      const g = new THREE.SphereGeometry(1, seg, Math.max(4, seg >> 1));
-      g.scale(sx, sy, sz);
-      add(place(g, x, y, z, rx), hex, opts);
-    },
-    riderBox(w, h, d, x, y, z, hex, opts, rx = 0) { if (riderOn) add(place(new THREE.BoxGeometry(w, h, d), x, y, z, rx), hex, opts); },
     // a wheel standing in the bike's plane: tyre with its rounded profile, rim, spokes of its style, hub and brake rotor
     wheel(r, z, width = 0.12, style = 'cast', rotors = 1, x = 0) {
       if (!wheels || !bodyOn) return;
@@ -213,33 +202,13 @@ function makeBuilder(detail, wheels = true, riders = 'with') {
       if (x) for (let i = first; i < parts.length; i++) parts[i].translate(x, 0, 0);
     }
   };
-  b.setRiderOnly = () => { bodyOn = false; riderOn = true; };
   return b;
 }
 
-// The rider, from where their hips, shoulders, head, hands, knees and feet are; jacket and trousers colours. A fuller
-// torso (chest, shoulders, back), a full-face helmet in the bike's paint with its visor and chin bar, gloves and boots.
-function rider(b, { hip, shoulder, head, hand, knee, foot }, jacket = LEATHER, legs = JEANS) {
-  const [, hy, hz] = hip, [, sy, sz] = shoulder;
-  const back = [0, sy - 0.06, sz];
-  b.limb([0, hy + 0.06, hz], back, 0.155, jacket);
-  b.limb([-0.12, sy - 0.05, sz], [0.12, sy - 0.05, sz], 0.085, jacket);
-  b.riderBlob(0.16, 0.09, 0.13, 0, hy, hz, legs);
-  b.limb([0, sy, sz], [head[0], head[1] - 0.12, head[2] - 0.02], 0.05, jacket);
-  b.riderBlob(0.135, 0.145, 0.155, head[0], head[1], head[2], 0xffffff, { paint: 1, rough: 0.18, metal: 0.1 });
-  b.riderBlob(0.11, 0.055, 0.06, head[0], head[1] + 0.005, head[2] + 0.11, GLASS, { rough: 0.05, metal: 0.6 });
-  b.riderBlob(0.09, 0.05, 0.06, head[0], head[1] - 0.085, head[2] + 0.1, 0x202124, { rough: 0.4 });
-  for (const s of [-1, 1]) {
-    const sh = [s * 0.19, sy - 0.04, sz], hd = [s * hand[0], hand[1], hand[2]];
-    const elbow = [s * (0.19 + hand[0]) * 0.58, (sy + hand[1]) / 2 - 0.08, (sz + hand[2]) / 2];
-    b.limb(sh, elbow, 0.058, jacket);
-    b.limb(elbow, hd, 0.05, jacket);
-    b.riderBlob(0.048, 0.042, 0.06, hd[0], hd[1], hd[2], GLOVE);
-    const hp = [s * 0.11, hy, hz], kn = [s * knee[0], knee[1], knee[2]], ft = [s * foot[0], foot[1], foot[2]];
-    b.limb(hp, kn, 0.078, legs);
-    b.limb(kn, ft, 0.064, legs);
-    b.riderBox(0.095, 0.1, 0.24, ft[0], ft[1] - 0.02, ft[2] + 0.05, BOOT);
-  }
+// The rider, from where their hips, shoulders, head, hands, knees and feet are, kept for posing a person on the bike
+// (PersonRig.perch, pedestrians.js); the bike's own geometry has no one on it
+function rider(b, pose) {
+  b.pose = { ...pose, standing: false };
 }
 
 // a V-twin: crankcase, two finned cylinders with their heads, the primary and the air cleaner (cruisers, tourers)
@@ -264,7 +233,8 @@ function vTwin(b, y, z, scale = 1) {
 function stander(b, deck, front, back, hand, lean = 0.08) {
   const hipY = deck + 0.92, hz = (front + back) / 2 - lean;
   rider(b, { hip: [0, hipY, hz], shoulder: [0, hipY + 0.5, hz + lean], head: [0, hipY + 0.68, hz + lean * 1.2], hand,
-    knee: [0.1, deck + 0.47, hz + 0.08], foot: [0.1, deck + 0.06, (front + back) / 2] }, 0x3b4a5a, JEANS);
+    knee: [0.1, deck + 0.47, hz + 0.08], foot: [0.1, deck + 0.06, (front + back) / 2] });
+  b.pose.standing = true;
 }
 
 const MODELS = {
@@ -297,7 +267,50 @@ const MODELS = {
     b.blob(0.03, 0.025, 0.02, 0, 0.9, f - 0.1, 0xfff6e0, { lamp: 1, rough: 0.15 });
     b.blob(0.02, 0.02, 0.012, 0, 0.82, -0.26, 0x6a0a0e, { lamp: 2, rough: 0.2 });
     rider(b, { hip: [0, 1.04, -0.25], shoulder: [0, 1.5, -0.02], head: [0, 1.68, 0.07], hand: [0.21, 1.0, f - 0.2],
-      knee: [0.13, 0.78, 0.0], foot: [0.12, 0.4, 0.06] }, 0x4a6b8a, 0x22252b);
+      knee: [0.13, 0.78, 0.0], foot: [0.12, 0.4, 0.06] });
+  },
+  ebike(b, s) {
+    const f = s.wb / 2, r = s.rr;
+    b.wheel(s.rf, f, s.wf, s.wheel, 0); b.wheel(s.rr, -f, s.wr, s.wheel, 0);
+    // a low step-over frame in its paint: a stout down tube swept to the bottom bracket, the seat tube, the stays
+    const head = [0, 0.9, f - 0.2], headLow = [0, 0.7, f - 0.15], bb = [0, 0.3, 0.02], seatTop = [0, 0.82, -0.2];
+    b.tube(headLow, head, 0.026, 0xffffff, PAINT);
+    b.tube(headLow, [0, 0.42, 0.22], 0.032, 0xffffff, PAINT, bb);
+    b.tube(bb, seatTop, 0.022, 0xffffff, PAINT);
+    b.tube([0, 0.84, f - 0.21], [0, 0.66, -0.14], 0.016, 0xffffff, PAINT);
+    for (const x of [-0.055, 0.055]) {
+      b.tube([x, r, -f], [x * 0.4, 0.3, 0.02], 0.011, 0xffffff, PAINT);
+      b.tube([x, r, -f], [x * 0.4, 0.78, -0.19], 0.011, 0xffffff, PAINT);
+      b.tube([x, s.rf, f], [x * 0.6, 0.7, f - 0.15], 0.013, 0xffffff, PAINT);
+    }
+    // the battery along the down tube, the motor in the rear hub, the controller box by the cranks
+    b.shell([[0.4, 0.6, 0.045, 0.045], [0.25, 0.47, 0.05, 0.05], [0.1, 0.37, 0.045, 0.045]], 0x1f2124, { rough: 0.35, metal: 0.2 }, { e: 3.2 });
+    b.box(0.03, 0.02, 0.04, 0.05, 0.53, 0.3, 0x58d36b, { rough: 0.3 });
+    b.disc(0.085, 0.09, 0, r, -f, 0x2a2c30, { metal: 0.6, rough: 0.35 }, 20);
+    b.box(0.07, 0.07, 0.12, 0, 0.27, 0.08, 0x1f2124, { rough: 0.5 });
+    // fenders and the rear rack
+    b.fender(s.rf + 0.04, 0.07, s.rf, f, 0.5, 2.5, 0x1a1b1d, DARKMETAL);
+    b.fender(s.rr + 0.04, 0.07, s.rr, -f, 0.55, 2.75, 0x1a1b1d, DARKMETAL);
+    b.box(0.15, 0.012, 0.36, 0, 0.82, -f + 0.02, 0x1a1b1d, DARKMETAL);
+    for (const x of [-0.07, 0.07]) b.tube([x, 0.82, -f + 0.16], [x, r, -f], 0.008, 0x1a1b1d, DARKMETAL);
+    // upright bars on a riser stem with a little display, saddle and post, cranks and chainring, pedals
+    b.tube(head, [0, 1.04, f - 0.27], 0.015, METAL, DARKMETAL);
+    b.tube([-0.26, 1.05, f - 0.33], [0, 1.04, f - 0.27], 0.012, BLACK, DARKMETAL, [0.26, 1.05, f - 0.33]);
+    for (const x of [-1, 1]) b.tube([x * 0.21, 1.05, f - 0.32], [x * 0.27, 1.05, f - 0.34], 0.018, 0x111111, { rough: 0.9 });
+    b.box(0.06, 0.012, 0.04, 0.07, 1.06, f - 0.27, 0x141518, { rough: 0.2, metal: 0.3 });
+    b.tube(seatTop, [0, 0.95, -0.24], 0.014, BLACK, DARKMETAL);
+    b.shell([[-0.1, 0.97, 0.04, 0.025], [-0.2, 0.97, 0.07, 0.03], [-0.33, 0.98, 0.095, 0.035]], SEAT, { rough: 0.8 });
+    b.disc(0.085, 0.008, -0.05, 0.3, 0.02, 0x8a8f96, { metal: 0.85, rough: 0.35 }, 18);
+    b.box(0.005, 0.012, f, -0.055, 0.3, -f / 2 + 0.01, 0x333333, DARKMETAL);
+    for (const x of [-1, 1]) {
+      b.tube([x * 0.07, 0.3, 0.02], [x * 0.08, 0.3 + x * 0.12, 0.02 + x * 0.1], 0.01, ALU, SHINY);
+      b.box(0.08, 0.02, 0.06, x * 0.12, 0.3 + x * 0.12, 0.02 + x * 0.1, 0x1a1a1a);
+    }
+    b.blob(0.035, 0.03, 0.025, 0, 0.95, f - 0.12, 0xfff6e0, { lamp: 1, rough: 0.15 });
+    b.blob(0.03, 0.015, 0.012, 0, 0.84, -f - 0.15, 0x6a0a0e, { lamp: 2, rough: 0.2 });
+    // sat more upright than on a bicycle
+    rider(b, { hip: [0, 1.04, -0.27], shoulder: [0, 1.53, -0.1], head: [0, 1.71, -0.03], hand: [0.22, 1.05, f - 0.32],
+      knee: [0.13, 0.78, 0.0], foot: [0.12, 0.4, 0.06] });
   },
   escooter(b, s) {
     const f = s.wb / 2;
@@ -327,7 +340,8 @@ const MODELS = {
     b.blob(0.05, 0.012, 0.012, 0, 0.11, -0.1, 0x6a0a0e, { lamp: 2, rough: 0.2 });
     // the rider faces where it goes, feet apart on the pads
     rider(b, { hip: [0, 1.05, -0.03], shoulder: [0, 1.55, 0.02], head: [0, 1.73, 0.04], hand: [0.3, 1.02, 0.05],
-      knee: [0.13, 0.6, 0.05], foot: [0.13, 0.19, 0] }, 0x5a3b6b, JEANS);
+      knee: [0.13, 0.6, 0.05], foot: [0.13, 0.19, 0] });
+    b.pose.standing = true;
   },
   sportbike(b, s) {
     const f = s.wb / 2;
@@ -369,7 +383,7 @@ const MODELS = {
     b.tube([-0.14, 0.4, -0.22], [-0.17, 0.62, -0.55], 0.065, CARBON, { metal: 0.3, rough: 0.35 });
     b.disc(0.045, 0.02, -0.17, 0.625, -0.56, CHROME, SHINY);
     for (const x of [-1, 1]) b.tube([x * 0.12, 0.45, -0.12], [x * 0.2, 0.45, -0.12], 0.012, ALU, SHINY);
-    rider(b, { hip: [0, 1.0, -0.17], shoulder: [0, 1.32, 0.2], head: [0, 1.42, 0.38], hand: [0.27, 0.95, 0.42], knee: [0.21, 0.82, 0.12], foot: [0.18, 0.47, -0.12] }, LEATHER, LEATHER);
+    rider(b, { hip: [0, 1.0, -0.17], shoulder: [0, 1.32, 0.2], head: [0, 1.42, 0.38], hand: [0.27, 0.95, 0.42], knee: [0.21, 0.82, 0.12], foot: [0.18, 0.47, -0.12] });
   },
   cruiser(b, s) {
     const f = s.wb / 2;
@@ -401,7 +415,7 @@ const MODELS = {
     b.blob(0.06, 0.03, 0.03, 0, s.rr * 2 + 0.06, -f - 0.36, 0x6a0a0e, { lamp: 2, rough: 0.2 });
     b.box(0.17, 0.1, 0.008, 0, s.rr * 2 - 0.08, -f - 0.4, 0xf2f2ee, { rough: 0.4 }, 0.2);
     for (const x of [-1, 1]) b.box(0.13, 0.025, 0.3, x * 0.26, 0.36, 0.42, 0x1a1a1a, DARKMETAL);
-    rider(b, { hip: [0, 0.82, -0.28], shoulder: [0, 1.38, -0.3], head: [0, 1.56, -0.27], hand: [0.43, 1.22, 0.18], knee: [0.23, 0.86, 0.24], foot: [0.25, 0.42, 0.42] }, LEATHER, JEANS);
+    rider(b, { hip: [0, 0.82, -0.28], shoulder: [0, 1.38, -0.3], head: [0, 1.56, -0.27], hand: [0.43, 1.22, 0.18], knee: [0.23, 0.86, 0.24], foot: [0.25, 0.42, 0.42] });
   },
   scooter(b, s) {
     const f = s.wb / 2;
@@ -431,7 +445,7 @@ const MODELS = {
     b.tube([-0.12, 0.2, -0.3], [-0.15, 0.25, -0.6], 0.055, 0x2b2d30, DARKMETAL);
     b.disc(0.03, 0.03, -0.15, 0.25, -0.62, CHROME, SHINY, 10);
     b.blob(0.07, 0.035, 0.02, 0, 0.63, -0.875, 0x6a0a0e, { lamp: 2, rough: 0.2 });
-    rider(b, { hip: [0, 0.86, -0.26], shoulder: [0, 1.38, -0.2], head: [0, 1.57, -0.16], hand: [0.29, 1.08, 0.46], knee: [0.18, 0.88, 0.17], foot: [0.14, 0.38, 0.2] }, 0x8a7558, JEANS);
+    rider(b, { hip: [0, 0.86, -0.26], shoulder: [0, 1.38, -0.2], head: [0, 1.57, -0.16], hand: [0.29, 1.08, 0.46], knee: [0.18, 0.88, 0.17], foot: [0.14, 0.38, 0.2] });
   },
   touring(b, s) {
     const f = s.wb / 2;
@@ -456,7 +470,7 @@ const MODELS = {
     for (const x of [-1, 1]) b.box(0.1, 0.05, 0.01, x * 0.36, 0.72, -1.17, 0x6a0a0e, { lamp: 2, rough: 0.2 });
     for (const x of [-1, 1]) b.tube([x * 0.2, 0.32, -0.2], [x * 0.24, 0.38, -1.05], 0.045, CHROME, SHINY);
     for (const x of [-0.12, 0.12]) b.tube([x, 0.38, -0.1], [x, s.rr, -f], 0.03, BLACK, DARKMETAL);
-    rider(b, { hip: [0, 0.97, -0.25], shoulder: [0, 1.5, -0.16], head: [0, 1.68, -0.12], hand: [0.34, 1.12, 0.36], knee: [0.26, 0.97, 0.15], foot: [0.27, 0.42, 0.3] }, 0x3c4148, 0x2a2c30);
+    rider(b, { hip: [0, 0.97, -0.25], shoulder: [0, 1.5, -0.16], head: [0, 1.68, -0.12], hand: [0.34, 1.12, 0.36], knee: [0.26, 0.97, 0.15], foot: [0.27, 0.42, 0.3] });
   },
   adventure(b, s) {
     const f = s.wb / 2;
@@ -485,14 +499,14 @@ const MODELS = {
     b.tube([-0.2, 0.62, -0.3], [-0.22, 0.92, -0.72], 0.07, ALU, { metal: 0.8, rough: 0.3 });
     for (const x of [-0.11, 0.11]) b.tube([x, 0.56, -0.06], [x, s.rr, -f], 0.03, ALU, { metal: 0.85, rough: 0.3 });
     for (const x of [-1, 1]) b.shell([[-0.5, 0.76, 0.09, 0.2, x * 0.36], [-0.95, 0.76, 0.09, 0.2, x * 0.36]], ALU, { metal: 0.8, rough: 0.4 }, { e: 8 });
-    rider(b, { hip: [0, 1.12, -0.24], shoulder: [0, 1.63, -0.1], head: [0, 1.81, -0.07], hand: [0.4, 1.28, 0.44], knee: [0.23, 1.0, 0.16], foot: [0.21, 0.56, 0.0] }, 0x4b4a3e, 0x3a3a34);
+    rider(b, { hip: [0, 1.12, -0.24], shoulder: [0, 1.63, -0.1], head: [0, 1.81, -0.07], hand: [0.4, 1.28, 0.44], knee: [0.23, 1.0, 0.16], foot: [0.21, 0.56, 0.0] });
   }
 };
 
 // riders: 'with' the bike and its rider in one (traffic), 'without' (the player's bike, its rider apart so they can be
 // thrown off), or 'only' the rider
-function buildMotoGeometry(spec, detail = true, wheels = true, riders = 'with') {
-  const b = makeBuilder(detail, wheels, riders);
+function buildMotoGeometry(spec, detail = true, wheels = true) {
+  const b = makeBuilder(detail, wheels);
   MODELS[spec.name](b, spec);
   const geo = mergeGeometries(b.parts);
   geo.computeBoundingSphere();
@@ -538,4 +552,46 @@ function createMotoMaterial(fixedHex = null) {
   return mat;
 }
 
-export { MOTO_SPECS, buildMotoGeometry, buildMotoWheel, createMotoMaterial };
+// Where a person goes on each kind (rider() in its model), measured once
+const _poses = {};
+function motoRiderPose(kind) {
+  if (!_poses[kind]) {
+    const b = makeBuilder(false, false);
+    MODELS[kind](b, MOTO_SPECS[kind]);
+    _poses[kind] = b.pose;
+  }
+  return _poses[kind];
+}
+
+// The helmet each kind's rider wears: full-face on a motorbike, open-face on a scooter, a vented one on a bicycle,
+// none standing on an e-scooter or a hoverboard
+const HELMET_OF = { sportbike: 'full', cruiser: 'open', scooter: 'open', touring: 'full', adventure: 'full', bicycle: 'bike', ebike: 'bike' };
+const HELMET_PAINTS = [0x111214, 0x111214, 0xe9e9e6, 0x3c4046, 0x7a0e14, 0x1d2f4a, 0x9a9da1];
+
+// A helmet in the head bone's space (PersonRig.headPosition, +Y up the head, +Z the face), painted with the paint
+// (createMotoMaterial's paintColor) and its visor, vents and trim in their own colours
+function buildHelmetGeometry(type) {
+  const b = makeBuilder(true, false);
+  const SHELL = { paint: 1, rough: 0.2, metal: 0.05 };
+  if (type === 'full') {
+    b.blob(0.132, 0.148, 0.152, 0, 0.112, -0.004, 0, SHELL);
+    // the visor across the eyes, its pivots, and the chin bar's vent
+    b.blob(0.112, 0.052, 0.07, 0, 0.122, 0.098, GLASS, { rough: 0.05, metal: 0.7 });
+    for (const x of [-1, 1]) b.disc(0.022, 0.012, x * 0.128, 0.122, 0.04, 0x1c1c1e, { rough: 0.5 }, 10);
+    b.box(0.05, 0.02, 0.02, 0, 0.012, 0.143, 0x1c1c1e, { rough: 0.6 });
+    b.blob(0.118, 0.03, 0.13, 0, -0.025, -0.012, 0x1c1c1e, { rough: 0.7 });
+  } else if (type === 'open') {
+    b.blob(0.126, 0.13, 0.142, 0, 0.142, -0.016, 0, SHELL);
+    b.blob(0.118, 0.05, 0.12, 0, 0.07, -0.034, 0x2a1d14, { rough: 0.7 });
+    b.blob(0.1, 0.018, 0.04, 0, 0.17, 0.12, 0x1c1c1e, { rough: 0.5 });
+  } else {
+    b.blob(0.118, 0.085, 0.152, 0, 0.17, -0.016, 0, SHELL);
+    for (const x of [-0.045, 0, 0.045]) b.box(0.016, 0.02, 0.2, x, 0.245, -0.016, 0x1c1c1e, { rough: 0.6 });
+    b.box(0.2, 0.01, 0.012, 0, 0.115, 0.07, 0x1c1c1e, { rough: 0.6 });
+  }
+  const geo = mergeGeometries(b.parts);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+export { MOTO_SPECS, HELMET_OF, HELMET_PAINTS, buildMotoGeometry, buildMotoWheel, buildHelmetGeometry, createMotoMaterial, motoRiderPose };

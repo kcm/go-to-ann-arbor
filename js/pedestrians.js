@@ -2076,6 +2076,52 @@ class PersonRig {
       this.writeFoot(i, ankle, _qa.copy(_qRoot).multiply(qX(_q, -1.1)), 0);
     }
   }
+
+  /**
+   * On a motorbike, a scooter or a hoverboard: `p` (motorcycles.js' motoRiderPose) says, in `root`'s space (+Z
+   * forward), where the hips, shoulders, hands and feet go, and whether they stand (on a deck, knees a little bent)
+   * or sit (on the saddle, leaning as far as the shoulders are ahead of the hips).
+   */
+  perch(root, p) {
+    const s = this.s;
+    this.gait = 0;
+    this.run = 0;
+    this.placed = false;
+    root.updateWorldMatrix(true, false);
+    root.matrixWorld.decompose(_rootPos, _qRoot, _v);
+    const toWorld = (local) => local.applyQuaternion(_qRoot).add(_rootPos);
+
+    const lean = Math.atan2(p.shoulder[2] - p.hip[2], p.shoulder[1] - p.hip[1]);
+    const ankleY = p.foot[1] + 0.01;
+    const pelvisY = p.standing ? ankleY + this.legLength * 0.975 + (PELVIS_Y - HIP_Y) * s : p.hip[1] + 0.06;
+    qX(_qPelvis, p.standing ? 0.04 + lean * 0.5 : lean * 0.6).premultiply(_qRoot);
+    toWorld(_pelvis.set(0, pelvisY, p.hip[2] + (p.standing ? 0 : 0.02)));
+    this.writeBone(BONE.PELVIS, _qPelvis, _pelvis);
+    _qChest.copy(_qPelvis).multiply(qX(_q, p.standing ? lean * 0.5 : lean * 0.4 + 0.05));
+    this.writeBone(BONE.CHEST, _qChest, this.jointFrom(BONE.PELVIS, BONE.CHEST, _qPelvis, _pelvis, _chest));
+    // the head up, looking down the road however far the rider leans
+    _qa.copy(_qRoot).multiply(qX(_q, Math.max(-0.1, lean * 0.25 - 0.08)));
+    this.jointFrom(BONE.CHEST, BONE.HEAD, _qChest, _chest, _v);
+    this.writeBone(BONE.HEAD, _qa, _v);
+    this.headPosition = (this.headPosition || new THREE.Vector3()).copy(_v);
+    this.headQuaternion = (this.headQuaternion || new THREE.Quaternion()).copy(_qa);
+
+    _fwd.set(0, 0, 1).applyQuaternion(_qRoot);
+    this.yaw = Math.atan2(_fwd.x, _fwd.z);
+    for (let i = 0; i < 2; i++) {
+      const side = SIDES[i];
+      this.jointFrom(BONE.CHEST, LIMB.upperArm[i], _qChest, _chest, _shoulder);
+      toWorld(_target.set(side * p.hand[0], p.hand[1], p.hand[2] - 0.05));
+      _pole.set(side * 0.6, -1, -0.4).applyQuaternion(_qRoot);
+      this.limb(LIMB.upperArm[i], LIMB.forearm[i], _shoulder, _target, UPPER_ARM * s, (FOREARM + 0.07) * s, _pole, _fwd, side * ARM_BIND_ABDUCTION);
+
+      // feet on the pegs or the deck, flat, the knees ahead of them
+      toWorld(_target.set(side * p.foot[0], ankleY, p.foot[2] - 0.03));
+      this.jointFrom(BONE.PELVIS, LIMB.thigh[i], _qPelvis, _pelvis, _hip);
+      const ankle = this.solveLeg(i, _hip, _target, this.yaw);
+      this.writeFoot(i, ankle, _qa.copy(_qRoot), 0);
+    }
+  }
 }
 
 

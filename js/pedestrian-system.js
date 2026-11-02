@@ -1,3 +1,4 @@
+import { TIER } from './device-tier.js';
 import { blockAt, districtAt, LANDMARKS } from './city-config.js';
 import { createPedestrianRoutes } from './pedestrian-routes.js';
 import { PersonCrowd, PersonRig, PEDESTRIAN_DIVE_DURATION } from './pedestrians.js';
@@ -5,7 +6,7 @@ import { groundHeight } from './terrain.js';
 
 // Local pedestrian population: connected walks, curb queues, conversations and player avoidance.
 // Traffic supplies crossing permissions and view checks; this system owns the crowd and its animation.
-const NUM_PEDS = 520; // the pool; how many are out at once follows the place, the hour and the frame rate
+const NUM_PEDS = Math.round(520 * TIER.people); // the pool (fewer on a phone, device-tier.js); how many are out at once follows the place, the hour and the frame rate
 const PED_RADIUS = 320;
 const NEAR_RADIUS = 350;
 const PED_SPAWN_DISTANCE = 150;

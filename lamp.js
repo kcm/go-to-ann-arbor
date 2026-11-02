@@ -6564,7 +6564,7 @@ function lampLinks(pipe) {
   if (window.__lampPageChange || typeof location === 'undefined' || typeof document === 'undefined') return;
   var KEY = 'lamp:page-change', pieces = {};
   // The app around this page as Lamp built it, written in by Lamp: a change of it needs the app put here again.
-  var SHELL = '5809d357786cb13efb90989575b27eac';
+  var SHELL = '28bd27276c066b44ea032a708c299635';
   // What this copy has of a change, told to Lamp, which says it's in only once the page says so.
   function report(state, id, why) {
     var wish = window.Lamp && window.Lamp.wish;

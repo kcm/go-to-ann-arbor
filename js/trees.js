@@ -1,3 +1,4 @@
+import { TIER } from './device-tier.js';
 import * as THREE from 'three/webgpu';
 import { createTreeMaterial } from './tsl-materials.js';
 import { groundHeight } from './terrain.js';
@@ -868,7 +869,7 @@ const FAR_CELL_SIZE = 1000;
 // Draw distance per tier (0 park & plaza, 1 avenue & esplanade, 2 cross-street); at street level everything beyond
 // LOW_CUTOFF is behind the buildings anyway
 const MAX_DIST = [3000, 1600, 950];
-const LOW_CUTOFF = 1150;
+const LOW_CUTOFF = 1150 * Math.max(0.6, TIER.farCut); // nearer on a phone (device-tier.js)
 
 function hashPos(x, y, z) {
   const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;

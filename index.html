@@ -95,6 +95,7 @@
       <symbol id="i-locate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.4"/><circle cx="12" cy="12" r="1.7" fill="currentColor"/><path d="M12 2.5v3.1M12 18.4v3.1M2.5 12h3.1M18.4 12h3.1"/></symbol>
       <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/></symbol>
       <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m20 20-4.6-4.6"/></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/></symbol>
       <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></symbol>
     </defs>
   </svg>
@@ -156,10 +157,19 @@
       <button id="btn-sound" class="tool-btn icon-only" type="button" title="Mute sound [N]" aria-label="Mute sound" aria-pressed="true">
         <svg class="icon" aria-hidden="true"><use href="#i-sound"/></svg>
       </button>
+      <button id="btn-reset" class="tool-btn icon-only" type="button" popovertarget="reset-popover" title="Reset game" aria-label="Reset game">
+        <svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>
+      </button>
       <button id="btn-toggle-hud" class="tool-btn icon-only" type="button" title="Clean view: hide the HUD [H]" aria-label="Hide HUD" aria-pressed="false">
         <svg class="icon icon-hide" aria-hidden="true"><use href="#i-eye"/></svg><svg class="icon icon-show" aria-hidden="true"><use href="#i-eye-off"/></svg>
       </button>
     </div>
+  </div>
+
+  <!-- Reset: everything back where a first play starts -->
+  <div id="reset-popover" class="popover" popover data-side="below" data-anchor="hud-toolbar" aria-label="Reset game">
+    <div class="pop-title">Start over?</div>
+    <button id="reset-confirm" class="pop-item" type="button"><span class="pop-name">Reset game</span><span class="pop-sub">Your car, bike, kayak and helicopter go back to the start</span></button>
   </div>
 
   <!-- Teleport Destinations (native popover: light-dismiss & Esc) -->
@@ -345,7 +355,7 @@
   </section>
 
 
-<div id="lamp-credit">Based on <a href="https://github.com/mrdoob/slop-newyork" target="_blank" rel="noopener">Slop New York</a> by Mr.doob · <a href="https://lamp.dev/?repo=https://github.com/mrubens/go-to-ann-arbor&amp;commit=3681fb673a5cc54f2710d3d2a7a057b757081dd6&amp;from=page" target="_blank" rel="noopener">Open in Lamp</a> · <a href="#" id="lamp-remix-open">Remix…</a></div>
+<div id="lamp-credit">Based on <a href="https://github.com/mrdoob/slop-newyork" target="_blank" rel="noopener">Slop New York</a> by Mr.doob · <a href="https://lamp.dev/?repo=https://github.com/mrubens/go-to-ann-arbor&amp;commit=e0692774463d9f0dc0c41d37b7a2609b39589716&amp;from=page" target="_blank" rel="noopener">Open in Lamp</a> · <a href="#" id="lamp-remix-open">Remix…</a></div>
 <div id="lamp-remix" hidden>
   <div class="lamp-remix-head">Make Go To Ann Arbor yours<button type="button" id="lamp-remix-close" aria-label="Close">×</button></div>
   <p>Say what you'd change. Lamp makes the change and keeps your data.</p>
@@ -354,7 +364,7 @@
   <button type="button" id="lamp-remix-go" disabled>Continue with Lamp</button>
   <p class="lamp-remix-note">Opens lamp.dev with your request. Lamp is a free Mac app; it opens a copy of Go To Ann Arbor with your request ready to send.</p>
 </div>
-<script type="application/json" id="lamp-remix-target">{"link":null,"origin":{"commit":"3681fb673a5cc54f2710d3d2a7a057b757081dd6","repo":"https:\/\/github.com\/mrubens\/go-to-ann-arbor"},"request":"Make an app like Go To Ann Arbor: Explore Ann Arbor, Michigan in 3D on foot, by car, by bike or by helicopter.\n\nThen: {ask}"}</script>
+<script type="application/json" id="lamp-remix-target">{"link":null,"origin":{"commit":"e0692774463d9f0dc0c41d37b7a2609b39589716","repo":"https:\/\/github.com\/mrubens\/go-to-ann-arbor"},"request":"Make an app like Go To Ann Arbor: Explore Ann Arbor, Michigan in 3D on foot, by car, by bike or by helicopter.\n\nThen: {ask}"}</script>
 <script>
 (function(){var o=document.getElementById('lamp-remix-open'),p=document.getElementById('lamp-remix'),a=document.getElementById('lamp-remix-ask'),g=document.getElementById('lamp-remix-go');
 if(!o||!p||!a||!g)return;var t=JSON.parse(document.getElementById('lamp-remix-target').textContent||'{}');

@@ -143,6 +143,12 @@ function chuteNear(x, z) {
 // Where the channel's paddlers put in: at its head, off the pond, and which way it runs there
 const CASCADE_ENTRY = (() => { const g = segAt(HEAD + 2), [x, z] = along(HEAD + 2); return { x, z, tx: g.tx, tz: g.tz }; })();
 
+// Where a paddler starts (main.js SCENIC_STARTS): in the channel a little above its first drop, facing down it
+const CASCADE_START = (() => {
+  const s = Math.max(HEAD + 4, Math.min(...DROPS.map((d) => d.s)) - 14), g = segAt(s), [x, z] = along(s);
+  return { x, z, heading: Math.atan2(g.tx, g.tz) };
+})();
+
 // On the pond above the channel's head the water barely moves but for a slow draw into the channel: into `out`
 // (m/s) and how much it takes over from the river's own current there (weight); false away from it
 const HEAD_AT = along(HEAD), DRAW = 110;
@@ -306,4 +312,4 @@ function buildCascades(group, waterLevel) {
   return { rocks: places.length, wall: wall.length };
 }
 
-export { buildCascades, carveCascades, inCascades, pondDraw, chuteNear, CASCADE_ENTRY, cascadeGaps, cascadeLevel, cascadeDepth, cascadeCurrent, nearDrop, onWeirRocks, DROPS as CASCADE_DROPS, CASCADE_WAVES };
+export { buildCascades, carveCascades, inCascades, pondDraw, chuteNear, CASCADE_ENTRY, CASCADE_START, cascadeGaps, cascadeLevel, cascadeDepth, cascadeCurrent, nearDrop, onWeirRocks, DROPS as CASCADE_DROPS, CASCADE_WAVES };

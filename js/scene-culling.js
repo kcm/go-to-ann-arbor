@@ -1,3 +1,4 @@
+import { TIER } from './device-tier.js';
 import * as THREE from 'three/webgpu';
 import { hot } from '../lamp-game.js';
 
@@ -15,7 +16,8 @@ import { hot } from '../lamp-game.js';
 const SHADOW_PROXY_LAYER = 3;
 // Distance at which an instance of typical size s (m) is culled: about s / d * 1100 px tall on a 1300 px viewport
 const CULL_PER_METRE = 1100;
-const CULL_MIN = 300; // never closer: the shadow cascades reach ~300 m at street level
+// never closer: the shadow cascades reach ~300 m at street level (on a phone, without them, the far props go sooner)
+const CULL_MIN = 300 * TIER.farCut;
 const CULL_MAX = 2000; // beyond this the props are kept at any distance
 const PROXY_CELL = 500; // the far cascade spans ~400 m at street level: a cascade sees a few cells
 const STATIC_CELL = 1000;
@@ -179,7 +181,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
         if (o.userData.cullDistance > 0) {
           if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
           const sphere = o.geometry.boundingSphere.clone().applyMatrix4(o.matrixWorld);
-          pushCulled(o, sphere, o.userData.cullDistance);
+          pushCulled(o, sphere, o.userData.cullDistance * TIER.farCut);
         }
         return;
       }
@@ -194,7 +196,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
     // unlit (glowing) props, like signal lenses & lamp bulbs, read from much further away at night; a mesh may also
     // set its own (userData.cullDistance)
     const glow = mesh.material.isMeshBasicNodeMaterial || mesh.material.type === 'MeshBasicNodeMaterial' ? 3 : 1;
-    const cullDist = mesh.userData.cullDistance ?? Math.max(CULL_MIN, instanceSize(mesh) * CULL_PER_METRE * glow);
+    const cullDist = (mesh.userData.cullDistance ?? 0) * TIER.farCut || Math.max(CULL_MIN, instanceSize(mesh) * CULL_PER_METRE * glow);
     if (cullDist > CULL_MAX) {
       largeMeshes.push(mesh);
       continue;
@@ -235,6 +237,7 @@ function setupSceneCulling(scene, roots, shadow = null) {
     for (const root of roots) {
       root.traverse((o) => {
         if (!o.castShadow || !isStaticMesh(o) || !proxyableMaterial(o.material)) return;
+        if (o.userData.streamed) return; // ground drawn only near the player comes and goes (terrain.js)
         if (o.isInstancedMesh && o.count !== o.instanceMatrix.count) return;
         // Opt-ins (userData.shadowStandIn: true, or a coarser BufferGeometry to cast with): pre-chunked casters
         // (building-footprints.js) are big together, but each chunk falls under the size limits; and thin props

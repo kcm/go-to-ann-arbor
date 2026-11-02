@@ -1,8 +1,8 @@
 import * as THREE from 'three/webgpu';
-import { attribute, color, fract, mix, positionWorld, step, time } from 'three/tsl';
+import { abs, attribute, color, dot, float, fract, mix, normalWorld, positionGeometry, positionWorld, pow, smoothstep, step, texture as tex, time, vec2, vec3 } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { groundHeight } from './terrain.js';
-import { random, log } from '../lamp-game.js';
+import { random, log, texture as loadTexture } from '../lamp-game.js';
 import { roundedBox, roundedRectShape } from './vehicles.js';
 
 // Michigan's other season: road work. A few dozen blocks around town are shut, a Type III "ROAD CLOSED" barricade
@@ -59,11 +59,56 @@ function piece(geo, hex, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
   for (let i = 0; i < n; i++) { a[i * 3] = C.r; a[i * 3 + 1] = C.g; a[i * 3 + 2] = C.b; }
   geo.setAttribute('color', new THREE.BufferAttribute(a, 3));
   geo.setAttribute('shine', new THREE.BufferAttribute(new Float32Array(n), 1));
+  geo.setAttribute('soil', new THREE.BufferAttribute(new Float32Array(n), 1));
   return geo.index ? geo.toNonIndexed() : geo;
 }
 const box = (w, h, d, hex, x, y, z, rx, ry, rz) => piece(new THREE.BoxGeometry(w, h, d), hex, x, y, z, rx, ry, rz);
 const cyl = (rt, rb, h, hex, x, y, z, seg = 14, rx, ry, rz) => piece(new THREE.CylinderGeometry(rt, rb, h, seg), hex, x, y, z, rx, ry, rz);
 const merge = (parts) => { const g = mergeGeometries(parts); g.computeBoundingSphere(); return g; };
+// marks a part as earth: the material draws it with the soil's photographed grain, tinted by its colour
+const earthy = (geo) => { geo.getAttribute('soil').array.fill(1); return geo; };
+
+// a heap of dug earth: a lumpy, uneven dome with a ragged foot that sinks into the ground, w × h × d metres
+function moundGeo(seed, w, h, d, rings = 12, sectors = 36) {
+  const pos = [], idx = [];
+  const wob = (a) => 1 + 0.13 * Math.sin(3 * a + seed) + 0.07 * Math.sin(5 * a + seed * 2.3) + 0.04 * Math.sin(11 * a + seed * 4.1);
+  const lump = (x, z) => 0.07 * Math.sin(x * 6.1 + seed) * Math.sin(z * 5.3 - seed) + 0.04 * Math.sin(x * 13.7 + z * 11.9 + seed * 3);
+  pos.push(0, h * (1 + lump(0, 0)), 0);
+  for (let i = 1; i <= rings; i++) {
+    const t = i / rings;
+    for (let j = 0; j < sectors; j++) {
+      const a = (j / sectors) * Math.PI * 2, r = t * wob(a + t * 0.6);
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      // a slumped cone, steeper near the foot, with a second shoulder on one side
+      const y = t >= 1 ? -0.06 : h * (Math.pow(1 - t * t, 1.15) * (1 + 0.18 * Math.sin(2 * a + seed) * t) + lump(x, z) * (1 - t * 0.6));
+      pos.push(x * w / 2, y, z * d / 2);
+    }
+  }
+  for (let j = 0; j < sectors; j++) idx.push(0, 1 + ((j + 1) % sectors), 1 + j);
+  for (let i = 1; i < rings; i++) for (let j = 0; j < sectors; j++) {
+    const a = 1 + (i - 1) * sectors + j, b = 1 + (i - 1) * sectors + ((j + 1) % sectors), c = a + sectors, e = b + sectors;
+    idx.push(a, b, c, b, e, c);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+// clods and stones strewn over a mound (the same w, h, d), so it isn't one smooth shape
+function clods(parts, seed, w, h, d, n, hex, stone = 0x77736c) {
+  for (let i = 0; i < n; i++) {
+    const a = hash(seed, i, 1) * Math.PI * 2, t = 0.25 + hash(seed, i, 2) * 0.8;
+    const x = Math.cos(a) * t * w / 2, z = Math.sin(a) * t * d / 2;
+    const y = Math.max(0, h * Math.pow(Math.max(0, 1 - t * t), 1.15)) - 0.02;
+    const r = (0.05 + hash(seed, i, 3) * 0.12) * Math.min(1, w / 2);
+    const rock = hash(seed, i, 4) < 0.3;
+    const g = new THREE.DodecahedronGeometry(r, 0);
+    g.scale(1, 0.6 + hash(seed, i, 5) * 0.4, 0.8 + hash(seed, i, 6) * 0.4);
+    const p = piece(g, rock ? stone : hex, x, y, z, hash(seed, i, 7) * 3, hash(seed, i, 8) * 6, hash(seed, i, 9) * 3);
+    parts.push(rock ? p : earthy(p));
+  }
+}
 
 const ORANGE = 0xff5b0d, WHITE = 0xf4f2ec, BLACK = 0x1b1b1c, STEEL = 0x8a8d90, GLASS = 0x26343c, DIRT = 0x5b4733;
 
@@ -137,7 +182,7 @@ function ram(parts, a, b, r, hex) {
   parts.push(rod([a[0] - 0.01, a[1], a[2]], [a[0] + 0.01, a[1], a[2]], r * 1.25, 0x2a2a2a));
 }
 // a truck tyre on the x axis: tread, rounded shoulders, a steel wheel with its hub and nuts
-function tyre(parts, x, y, z, r, w, outward) {
+function tyreAt(parts, x, y, z, r, w, outward) {
   const s = Math.min(0.09, w * 0.28);
   parts.push(cyl(r, r, w - 2 * s, 0x161617, x, y, z, 22, 0, 0, Math.PI / 2));
   for (const side of [-1, 1]) {
@@ -179,7 +224,8 @@ function fender(parts, x, y, z, r, w, hex, from = 0, to = Math.PI) {
 
 // a tandem-axle dump truck, the kind Ann Arbor's paving contractors run: a conventional cab behind a long hood,
 // a ribbed steel box with a cab shield, its load heaped in it; facing +z, about 9 m long
-function dumpTruckGeo() {
+function dumpTruckGeo(withTyres = true) {
+  const tyre = withTyres ? tyreAt : () => {};
   const P = 0xd9531e, P2 = 0xb8441a, CH = 0xd8dadc, DK = 0x2b2c2e, GL = 0x1d272d;
   const parts = [];
   // chassis
@@ -236,9 +282,8 @@ function dumpTruckGeo() {
   for (const sx of [-1, 1]) parts.push(box(0.2, 0.2, 0.12, DK, sx * 1.05, 2.86, z0 - 0.1));
   parts.push(box(2.3, 0.1, 0.1, P2, 0, 1.7, z0 - 0.1));
   // the load, heaped
-  const load = new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  load.scale(1.12, 0.62, 2.55);
-  parts.push(piece(load, 0x4e3c2b, 0, 2.62, zc));
+  parts.push(earthy(piece(moundGeo(2.7, 2.24, 0.7, 5.1), 0x4e3c2b, 0, 2.6, zc)));
+  { const c = []; clods(c, 5.1, 2.0, 0.65, 4.8, 18, 0x4a3828); for (const g of c) { g.translate(0, 2.6, zc); parts.push(g); } }
   // the hoist ram under the box's front
   ram(parts, [0, 1.0, 1.4], [0, 1.5, 0.75], 0.11, DK);
   // tandem rear: dual tyres, flat fenders, mud flaps, tail lamps
@@ -255,12 +300,24 @@ function dumpTruckGeo() {
   parts.push(box(2.3, 0.14, 0.14, DK, 0, 0.62, -4.38));
   return merge(parts);
 }
+// the truck's wheels on their own, for the one the player drives: a front tyre, and a rear pair of duals, each about
+// its axle at the origin (the player's truck places them at TRUCK_WHEELS)
+const TRUCK_WHEELS = [
+  { x: -1.02, z: 3.2, front: true }, { x: 1.02, z: 3.2, front: true },
+  { x: -0.93, z: -1.55 }, { x: 0.93, z: -1.55 }, { x: -0.93, z: -2.95 }, { x: 0.93, z: -2.95 }
+];
+function truckWheelGeo(front, side) {
+  const parts = [];
+  if (front) tyreAt(parts, 0, 0, 0, 0.54, 0.34, side);
+  else { tyreAt(parts, -side * 0.17, 0, 0, 0.54, 0.3, -side); tyreAt(parts, side * 0.17, 0, 0, 0.54, 0.3, side); }
+  return merge(parts);
+}
 
 // a mid-size tracked excavator in its maker's yellow: tracks with grousers on idler, sprocket and rollers, the
 // turntable, the house with its counterweight and engine hood, the glass cab, and a boom, stick and bucket worked by
 // rams, reaching forward (+z) into the dig
 function excavatorGeo() {
-  const Y = 0xf2b705, Y2 = 0xd49a00, DK = 0x252627, MID = 0x46484a, GL = 0x1f2a30, CH = 0xd8dadc;
+  const Y = 0xdfa012, Y2 = 0xb98410, DK = 0x252627, MID = 0x46484a, GL = 0x1f2a30, CH = 0xd8dadc;
   const parts = [];
   // undercarriage
   for (const sx of [-1, 1]) {
@@ -304,10 +361,25 @@ function excavatorGeo() {
   // boom (bent, in two lengths), stick, bucket, their rams
   const bx = 0.3, piv = [bx, 1.85, 1.05], knee = [bx, 4.25, 2.95], tip = [bx, 3.95, 5.05];
   parts.push(box(0.55, 0.5, 0.5, Y2, bx, 1.75, 1.05));
-  parts.push(beam(piv, knee, 0.44, 0.58, Y), beam(knee, tip, 0.42, 0.5, Y));
+  parts.push(beam(piv, knee, 0.6, 0.72, Y), beam(knee, tip, 0.56, 0.62, Y));
+  for (const sx of [-1, 1]) {
+    const o = (p) => [p[0] + sx * 0.31, p[1], p[2]];
+    parts.push(beam(o(piv), o(knee), 0.03, 0.5, Y2), beam(o(knee), o(tip), 0.03, 0.44, Y2));
+    parts.push(cyl(0.16, 0.16, 0.06, DK, bx + sx * 0.33, knee[1], knee[2], 12, 0, 0, Math.PI / 2));
+  }
+  // the hydraulic hoses that run up the boom and down to the bucket, in black rubber
+  for (const hx of [-0.1, 0.1]) {
+    const o = (p, dy, dz = 0) => [p[0] + hx, p[1] + dy, p[2] + dz];
+    parts.push(rod(o(piv, 0.36, -0.2), o(knee, 0.36), 0.03, 0x141414, 8), rod(o(knee, 0.36), o(tip, 0.32), 0.03, 0x141414, 8));
+    parts.push(rod(o(tip, 0.32), o(tip, 0.5, 0.35), 0.03, 0x141414, 8));
+  }
+  // black-and-yellow warning stripes on the counterweight's back
+  for (let i = 0; i < 7; i++) parts.push(box(0.16, 0.62, 0.03, 0x1a1a1a, -1.05 + i * 0.35, 1.58, -2.61, 0, 0, 0.6));
   for (const sx of [-1, 1]) ram(parts, [bx + sx * 0.3, 1.4, 1.35], [bx + sx * 0.3, 3.35, 2.55], 0.1, Y2);
   const stTop = [bx, 4.55, 4.85], stEnd = [bx, 1.2, 5.85];
-  parts.push(beam(stTop, stEnd, 0.36, 0.44, Y));
+  parts.push(beam(stTop, stEnd, 0.46, 0.56, Y));
+  // the bucket's linkage at the stick's end
+  for (const sx of [-1, 1]) parts.push(beam([bx + sx * 0.2, 1.75, 6.15], [bx + sx * 0.2, 1.05, 6.45], 0.06, 0.16, Y2));
   ram(parts, [bx, 4.75, 2.95], [bx, 4.72, 4.75], 0.09, Y2);
   ram(parts, [bx, 4.4, 5.2], [bx, 1.75, 6.15], 0.075, Y2);
   parts.push(beam([bx, 1.75, 6.15], [bx, 1.2, 6.2], 0.3, 0.1, DK));
@@ -324,23 +396,41 @@ function excavatorGeo() {
     const la = -Math.PI * 0.82, ly = bk[1] + Math.sin(la) * br, lz = bk[2] + Math.cos(la) * br;
     for (let i = 0; i < 5; i++) parts.push(box(0.08, 0.07, 0.22, 0x9a9da0, bx - 0.36 + i * 0.18, ly - 0.03, lz - 0.08, 0.5));
     // a scoop of dirt in it
-    const d = new THREE.SphereGeometry(0.42, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2);
-    d.scale(1.05, 0.5, 0.9);
-    parts.push(piece(d, 0x4e3c2b, bk[0], bk[1] - 0.05, bk[2]));
+    parts.push(earthy(piece(moundGeo(8.3, 0.88, 0.24, 0.76, 6, 20), 0x4e3c2b, bk[0], bk[1] - 0.05, bk[2])));
   }
   return merge(parts);
 }
 
 function pileGeo() {
-  const g = new THREE.SphereGeometry(1, 12, 7, 0, Math.PI * 2, 0, Math.PI / 2);
-  g.scale(2.0, 1.0, 1.6);
-  return merge([piece(g, 0x6a5038)]);
+  const parts = [earthy(piece(moundGeo(1.7, 4.4, 1.15, 3.5), 0x5e4632))];
+  // a second, smaller heap slumped against it, and the clods and stones on both
+  parts.push(earthy(piece(moundGeo(4.2, 2.2, 0.55, 1.9, 8, 28), 0x56402d, 1.5, 0, 0.9)));
+  clods(parts, 3.3, 4.2, 1.1, 3.3, 34, 0x4f3b29);
+  return merge(parts);
 }
+// the dug-up patch (a unit square, scaled to the dig): loose backfill heaped a little above the cut asphalt, its edge
+// ragged where the pavement broke off
 function patchGeo() {
-  return merge([box(1, 0.04, 1, 0x3b3026, 0, 0.02, 0)]);
+  const n = 20, pos = [], idx = [];
+  for (let i = 0; i <= n; i++) for (let j = 0; j <= n; j++) {
+    let x = i / n - 0.5, z = j / n - 0.5;
+    const edge = i === 0 || j === 0 || i === n || j === n;
+    if (edge) { const k = 0.035 * hash(i, j, 5); x -= Math.sign(x) * (i === 0 || i === n ? k : 0); z -= Math.sign(z) * (j === 0 || j === n ? k : 0); }
+    const y = edge ? 0.012 : 0.03 + 0.035 * hash(i, j, 6) + 0.025 * Math.sin(i * 0.9) * Math.sin(j * 0.7);
+    pos.push(x, y, z);
+  }
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    const a = i * (n + 1) + j, b = a + n + 1;
+    idx.push(a, a + 1, b, a + 1, b + 1, b);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return merge([earthy(piece(g, 0x3e3022))]);
 }
 function plateGeo() {
-  return merge([box(1, 0.03, 1, 0x5d6063, 0, 0.015, 0)]);
+  return merge([gloss(box(1, 0.03, 1, 0x4f5153, 0, 0.015, 0), 0.25)]);
 }
 
 function signTexture(draw, w = 512, h = 256) {
@@ -398,7 +488,16 @@ function buildRoadWork(group, closures) {
   const solid = (x, z, yaw, hx, hz, top) => {
     const cs = Math.cos(yaw), sn = Math.sin(yaw), g = groundHeight(x, z);
     const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
-    colliders.push({ minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez, minY: g, maxY: g + top, solid: true, obb: { cx: x, cz: z, hx, hz, cs, sn } });
+    const col = { minX: x - ex, maxX: x + ex, minZ: z - ez, maxZ: z + ez, minY: g, maxY: g + top, solid: true, obb: { cx: x, cz: z, hx, hz, cs, sn } };
+    colliders.push(col);
+    return col;
+  };
+  // a machine's box moved to where it stands now
+  const reboxed = (m) => {
+    const cs = Math.cos(m.yaw), sn = Math.sin(m.yaw), g = groundHeight(m.x, m.z), c = m.col;
+    const ex = Math.abs(cs) * m.hx + Math.abs(sn) * m.hz, ez = Math.abs(sn) * m.hx + Math.abs(cs) * m.hz;
+    Object.assign(c, { minX: m.x - ex, maxX: m.x + ex, minZ: m.z - ez, maxZ: m.z + ez, minY: g, maxY: g + m.top });
+    Object.assign(c.obb, { cx: m.x, cz: m.z, cs, sn });
   };
 
   for (const e of closures) {
@@ -453,32 +552,66 @@ function buildRoadWork(group, closures) {
     }
     // the machine on the open side of the dig, and the dirt it dug
     const machineO = -side * Math.max(0.5, W - Wp - 1.6);
+    let pileAt; // the dirt heaped in line before the machine, long way down the street: a ramp to jump it from
     if (k < 0.55 || Lp < 18) {
+      pileAt = at(mid - Lp * 0.15 - 4.6 - 9, machineO);
       const [x, z] = at(mid - Lp * 0.15, machineO);
       const ty = yaw + (hash(x, z, 4) < 0.5 ? 0 : Math.PI);
-      fixed.truck.push({ x, z, yaw: ty });
-      solid(x, z, ty, 1.3, 4.6, 3.6);
-      lamps.push({ fixed: true, x, z, yaw: ty, ox: -0.95, oy: 3.45, oz: 2.75 }, { fixed: true, x, z, yaw: ty, ox: 0.95, oy: 3.45, oz: 2.75 });
+      const t = { kind: 'dumptruck', x, z, yaw: ty, home: [x, z, ty], hx: 1.3, hz: 4.6, top: 3.6 };
+      fixed.truck.push(t);
+      t.col = solid(x, z, ty, 1.3, 4.6, 3.6);
+      t.lamps = [{ fixed: true, x, z, yaw: ty, ox: -0.95, oy: 3.45, oz: 2.75 }, { fixed: true, x, z, yaw: ty, ox: 0.95, oy: 3.45, oz: 2.75 }];
+      lamps.push(...t.lamps);
     } else {
       // the excavator stands beside the dig and reaches across it
       const [x, z] = at(mid, -side * Math.max(0.5, W - Wp - 2.0));
+      pileAt = at(mid - 1.45 - 9, -side * Math.max(0.5, W - Wp - 2.0));
       const ty = yaw + side * Math.PI / 2;
-      fixed.excavator.push({ x, z, yaw: ty });
-      solid(x, z, ty, 1.45, 2.4, 3.4);
+      const t = { kind: 'excavator', x, z, yaw: ty, home: [x, z, ty], hx: 1.45, hz: 2.4, top: 3.4, lamps: [] };
+      fixed.excavator.push(t);
+      t.col = solid(x, z, ty, 1.45, 2.4, 3.4);
     }
     {
-      const [x, z] = at(mid + Lp / 2 - 3, po);
-      fixed.pile.push({ x, z, yaw: yaw + k * 3 });
-      solid(x, z, yaw, 1.4, 1.4, 1.0);
+      const [x, z] = pileAt;
+      // no box round it: it's earth, driven up and over like a ramp (pileTop)
+      fixed.pile.push({ x, z, yaw: yaw + Math.PI / 2 + (k - 0.5) * 0.3, g: groundHeight(x, z) });
     }
   }
 
   // ---- drawing
-  const mat = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.7, metalness: 0.05 });
-  // paint is satin, glass and chrome shine
-  const shine = attribute('shine', 'float');
-  mat.roughnessNode = mix(0.62, 0.08, shine);
-  mat.metalnessNode = mix(0.05, 0.85, shine);
+  // its colour is worked out below from the vertex colours, so the material doesn't multiply them in again
+  const mat = new THREE.MeshStandardNodeMaterial({ roughness: 0.7, metalness: 0.05 });
+  // the photographed soil (ambientCG's Ground 054), filled in once it's loaded
+  const soilMap = new THREE.Texture();
+  soilMap.wrapS = soilMap.wrapT = THREE.RepeatWrapping;
+  soilMap.colorSpace = THREE.SRGBColorSpace;
+  loadTexture('assets/ambientcg/Ground054_1K-JPG_Color.jpg').then((t) => { soilMap.image = t.image; soilMap.needsUpdate = true; }).catch(() => {});
+  // paint is satin, glass and chrome shine; earth is the soil's grain in its own colour; and everything that works the
+  // dig wears it: mud thrown up its lower half, dust on what faces up, the undersides in shade
+  const shine = attribute('shine', 'float'), soil = attribute('soil', 'float'), vc = attribute('color', 'vec3');
+  const wN = pow(abs(normalWorld), vec3(4)), wSum = wN.x.add(wN.y).add(wN.z);
+  const grainAt = (scale) => tex(soilMap, positionWorld.zy.mul(scale)).rgb.mul(wN.x)
+    .add(tex(soilMap, positionWorld.xz.mul(scale)).rgb.mul(wN.y))
+    .add(tex(soilMap, positionWorld.xy.mul(scale)).rgb.mul(wN.z)).div(wSum);
+  const grain = grainAt(0.55), lum = dot(grain, vec3(0.3, 0.59, 0.11)).div(0.42);
+  const patchy = smoothstep(0.75, 1.15, dot(grainAt(0.13), vec3(0.3, 0.59, 0.11)).div(0.42));
+  const earth = vc.mul(mix(vec3(lum), grain.div(0.42), 0.25)).mul(1.35);
+  const clean = float(1).sub(shine.mul(0.85));
+  const mud = smoothstep(1.9, 0.25, positionGeometry.y).mul(patchy.mul(0.7).add(0.3)).mul(clean);
+  // rain-streaked grime down the sides: the grain stretched tall, only on what faces sideways
+  const streak = smoothstep(0.85, 1.25, dot(tex(soilMap, vec2(positionWorld.x.add(positionWorld.z).mul(0.9), positionWorld.y.mul(0.04))).rgb, vec3(0.3, 0.59, 0.11)).div(0.42))
+    .mul(smoothstep(0.6, 0.2, abs(normalWorld.y))).mul(clean);
+  const scuff = smoothstep(0.7, 1.3, lum).mul(clean);
+  const dusty = smoothstep(0.55, 0.95, normalWorld.y).mul(0.22).mul(clean);
+  const muck = vec3(0.075, 0.055, 0.035);
+  let paint = mix(vc, vec3(dot(vc, vec3(0.3, 0.59, 0.11))), 0.12);
+  paint = paint.mul(mix(1, 0.72, patchy.mul(0.6).add(streak.mul(0.5)).min(1))).mul(mix(1, 0.88, scuff));
+  paint = mix(paint, muck.mul(lum), mud.mul(0.85));
+  paint = mix(paint, vec3(0.2, 0.17, 0.13).mul(lum), dusty);
+  paint = paint.mul(mix(1, 0.55, smoothstep(-0.05, -0.8, normalWorld.y)));
+  mat.colorNode = mix(paint, earth, soil);
+  mat.roughnessNode = mix(mix(0.62, 0.08, shine).add(mud.mul(0.3)).min(1), 0.97, soil);
+  mat.metalnessNode = mix(0.05, 0.85, shine).mul(float(1).sub(soil));
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), qa = new THREE.Quaternion(), qb = new THREE.Quaternion();
   const p3 = new THREE.Vector3(), s3 = new THREE.Vector3(1, 1, 1), up = new THREE.Vector3(0, 1, 0), xAxis = new THREE.Vector3(1, 0, 0);
   const instanced = (geo, material, count, shadow = true) => {
@@ -500,8 +633,9 @@ function buildRoadWork(group, closures) {
     list.forEach((f, i) => place(mesh, i, f.x, groundHeight(f.x, f.z) + (scaled ? 0.01 : 0), f.z, f.yaw, scaled ? f.sx : 1, 1, scaled ? f.sz : 1));
     return mesh;
   };
-  setFixed(dumpTruckGeo(), fixed.truck);
-  setFixed(excavatorGeo(), fixed.excavator);
+  const machineMesh = { dumptruck: setFixed(dumpTruckGeo(), fixed.truck), excavator: setFixed(excavatorGeo(), fixed.excavator) };
+  fixed.truck.forEach((m, i) => { m.i = i; });
+  fixed.excavator.forEach((m, i) => { m.i = i; });
   setFixed(pileGeo(), fixed.pile);
   setFixed(patchGeo(), fixed.patch, true, false);
   setFixed(plateGeo(), fixed.plate, true, false);
@@ -664,9 +798,78 @@ function buildRoadWork(group, closures) {
   }
 
   log(`[road work] ${closures.length} blocks closed, ${items.filter((i) => i.kind === 'cone').length} cones, ${byKind.drum.length} drums, ${byKind.barricade.length} barricades, ${fixed.truck.length + fixed.excavator.length} machines`);
+  // ---- the machines the player can climb into and drive (controllers.js drives them as a car): `nearestMachine` finds
+  // one within reach of where they stand, `take` lifts it out of the work zone (hidden, its box gone) and `leave` sets it
+  // down again where the player left it; `home` puts it back at its own dig
+  const machines = [...fixed.truck, ...fixed.excavator];
+  let held = null;
+  const show = (m, on) => {
+    const mesh = machineMesh[m.kind];
+    if (on) place(mesh, m.i, m.x, groundHeight(m.x, m.z), m.z, m.yaw);
+    else mesh.setMatrixAt(m.i, m4.makeScale(0, 0, 0));
+    mesh.instanceMatrix.needsUpdate = true;
+    for (const l of m.lamps) {
+      if (on) { l.x = m.x; l.z = m.z; l.yaw = m.yaw; lampAt(l, l.n); } else lampMesh.setMatrixAt(l.n, m4.makeScale(0, 0, 0));
+    }
+    lampMesh.instanceMatrix.needsUpdate = true;
+    if (on) reboxed(m); else m.col.maxY = -Infinity;
+  };
+  function nearestMachine(x, z, reach) {
+    let best = null, bestD = reach;
+    for (const m of machines) {
+      if (m === held) continue;
+      // how far from its sides, not its middle: a truck is long
+      const cs = Math.cos(m.yaw), sn = Math.sin(m.yaw), dx = x - m.x, dz = z - m.z;
+      const lx = Math.abs(dx * cs - dz * sn) - m.hx, lz = Math.abs(dx * sn + dz * cs) - m.hz;
+      const d = Math.hypot(Math.max(0, lx), Math.max(0, lz));
+      if (d < bestD) { bestD = d; best = m; }
+    }
+    return best ? { machine: best, d: bestD, x: best.x, z: best.z, yaw: best.yaw } : null;
+  }
+  function take(m) {
+    if (held && held !== m) leave(held.x, held.z, held.yaw);
+    held = m;
+    show(m, false);
+    return { kind: m.kind, hex: 0, style: 0 };
+  }
+  function leave(x, z, yaw) {
+    const m = held;
+    if (!m) return null;
+    held = null;
+    Object.assign(m, { x, z, yaw });
+    show(m, true);
+    return m.col;
+  }
+  // a reloaded game whose player was in one: the one of that kind nearest them is the one they're in
+  function claim(kind, x, z) {
+    let best = null, bestD = Infinity;
+    for (const m of machines) if (m.kind === kind && (m.x - x) ** 2 + (m.z - z) ** 2 < bestD) { bestD = (m.x - x) ** 2 + (m.z - z) ** 2; best = m; }
+    if (best) take(best);
+  }
+  function home() {
+    if (held) leave(...held.home);
+    for (const m of machines) if (m.x !== m.home[0] || m.z !== m.home[1]) { [m.x, m.z, m.yaw] = m.home; show(m, true); }
+  }
+
   // onHit(item, speed): set by the game, for the sound of it
-  const api = { group, colliders, update, closures, onHit: null };
+  // The dirt piles' height above the ground at (x, z), or -Infinity off them: the two heaps of pileGeo as straight cones
+  // just inside their domes (the wheels sink a little in the loose earth), so a car runs up an even slope and leaves
+  // the top with all the lift it climbed with, enough at speed to clear the machine beyond or land on it
+  // (controllers.js getGroundHeight, carVertical)
+  const heap = (lx, lz, w, h, d) => { const t = Math.hypot(lx / (w / 2), lz / (d / 2)); return t < 1 ? h * (1 - t) : -Infinity; };
+  const pileTop = (x, z) => {
+    let top = -Infinity;
+    for (const p of fixed.pile) {
+      const dx = x - p.x, dz = z - p.z;
+      if (dx * dx + dz * dz > 9) continue;
+      const cs = Math.cos(p.yaw), sn = Math.sin(p.yaw), lx = dx * cs - dz * sn, lz = dx * sn + dz * cs;
+      const y = Math.max(heap(lx, lz, 4.4, 1.15, 3.5), heap(lx - 1.5, lz - 0.9, 2.2, 0.55, 1.9));
+      if (y > -Infinity) top = Math.max(top, p.g + y);
+    }
+    return top;
+  };
+  const api = { group, colliders, pileTop, update, closures, onHit: null, material: mat, nearestMachine, take, leave, claim, home, get held() { return held; } };
   return api;
 }
 
-export { planClosures, buildRoadWork };
+export { planClosures, buildRoadWork, dumpTruckGeo, excavatorGeo, truckWheelGeo, TRUCK_WHEELS };

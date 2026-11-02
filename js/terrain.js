@@ -681,18 +681,19 @@ function splitLong(layer) {
   return { count: total, attrs: attrs.map((a, n) => ({ ...a, array: out[n] })) };
 }
 
-// A layer in square tiles by where each triangle's middle falls (as splitIntoTiles), as layers
-function tilesOfLayer(layer) {
+// A layer in square tiles by where each triangle's middle falls (as splitIntoTiles), as layers (`keyed`: a Map of them
+// by each tile's key, x * 100000 + z in tiles, every one kept however few there are)
+function tilesOfLayer(layer, size = TILE, keyed = false) {
   const pos = layer.attrs.find((a) => a.name === 'position').array, triangles = layer.count / 3;
   const tileOf = new Int32Array(triangles), counts = new Map();
   for (let t = 0; t < triangles; t++) {
     const o = t * 9;
-    const key = Math.floor((pos[o] + pos[o + 3] + pos[o + 6]) / 3 / TILE) * 100000
-      + Math.floor((pos[o + 2] + pos[o + 5] + pos[o + 8]) / 3 / TILE);
+    const key = Math.floor((pos[o] + pos[o + 3] + pos[o + 6]) / 3 / size) * 100000
+      + Math.floor((pos[o + 2] + pos[o + 5] + pos[o + 8]) / 3 / size);
     tileOf[t] = key;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
-  if (counts.size < 2) return [layer];
+  if (counts.size < 2 && !keyed) return [layer];
   const tiles = new Map();
   for (const [key, n] of counts) tiles.set(key, { count: n * 3, used: 0, attrs: layer.attrs.map((a) => ({ ...a, array: new a.array.constructor(n * 3 * a.itemSize) })) });
   for (let t = 0; t < triangles; t++) {
@@ -704,6 +705,7 @@ function tilesOfLayer(layer) {
     }
     tile.used++;
   }
+  if (keyed) return new Map([...tiles].map(([key, { count, attrs }]) => [key, { count, attrs }]));
   return [...tiles.values()].map(({ count, attrs }) => ({ count, attrs }));
 }
 
@@ -851,6 +853,169 @@ async function drapeLayers(part, jobs) {
   return missing.length;
 }
 
+
+// ---- Ground streamed around the player (a phone, or a Mac without much memory: device-tier.js) ----------------------
+// The whole city's ground cut to follow the hills is far more than a phone's browser holds. Streamed, each big layer is
+// kept flat (a tenth of its cut size) in STREAM_TILE squares, and only the squares within `radius` of the player are
+// cut and drawn, read back from the page's database when an earlier play cut them; those left far behind are let go.
+const STREAM_TILE = 500;
+const stream = hot(import.meta).keep('groundStream', () => ({ radius: 0, x: 0, z: 0, layers: [], busy: false, cut: 0 }));
+// Streams the big ground layers set on the ground from here on, around (x, z) to begin with
+function streamGround(radius, x = 0, z = 0) {
+  Object.assign(stream, { radius, x, z });
+}
+const tileKeyOf = (x, z) => Math.floor(x / STREAM_TILE) * 100000 + Math.floor(z / STREAM_TILE);
+// How far (x, z) is from a tile's square
+function tileDistance(key, x, z) {
+  const tx = Math.round(key / 100000), tz = key - tx * 100000;
+  const dx = Math.max(tx * STREAM_TILE - x, 0, x - (tx + 1) * STREAM_TILE);
+  const dz = Math.max(tz * STREAM_TILE - z, 0, z - (tz + 1) * STREAM_TILE);
+  return Math.hypot(dx, dz);
+}
+
+// The page's database of cut tiles, one record per layer's tile; the layers each part last streamed, so the tiles of
+// one a change left behind are let go
+let tileBase = null;
+function tileDatabase() {
+  return tileBase ??= new Promise((done) => {
+    try {
+      const request = indexedDB.open('ground-tiles', 1);
+      request.onupgradeneeded = () => { request.result.createObjectStore('tiles'); request.result.createObjectStore('parts'); };
+      request.onsuccess = () => done(request.result);
+      request.onerror = request.onblocked = () => done(null);
+    } catch { done(null); }
+  });
+}
+async function forgetOldTiles(part, keys) {
+  const db = await tileDatabase();
+  if (!db) return;
+  try {
+    const t = db.transaction(['tiles', 'parts'], 'readwrite');
+    const tiles = t.objectStore('tiles'), parts = t.objectStore('parts');
+    const before = (await asked(parts.get(part))) || [];
+    for (const k of before) if (!keys.includes(k)) tiles.delete(IDBKeyRange.bound(`${k}/`, `${k}/￿`));
+    parts.put(keys, part);
+  } catch {}
+}
+async function readTiles(names) {
+  const db = await tileDatabase();
+  if (!db) return names.map(() => undefined);
+  try {
+    const store = db.transaction('tiles').objectStore('tiles');
+    return await Promise.all(names.map((k) => asked(store.get(k))));
+  } catch { return names.map(() => undefined); }
+}
+async function writeTiles(made) {
+  const db = await tileDatabase();
+  if (!db) return;
+  try {
+    const store = db.transaction('tiles', 'readwrite').objectStore('tiles');
+    for (const [k, layer] of made) store.put(layer, k);
+  } catch (error) { log(`[stream] not saved: ${error?.message || error}`); }
+}
+
+// Takes a ground layer's job (setOnTerrain) to stream: a group in the mesh's place, filled with its tiles near (x, z)
+function streamLayer(part, job, groundKey) {
+  const obj = job.obj;
+  const key = `${groundKey}.${job.instances ? 'i' : 'm'}${job.tolerance}.${fingerprint(job.inputs)}`;
+  const flat = tilesOfLayer(splitLong(job.make()), STREAM_TILE, true);
+  const group = new THREE.Group();
+  group.name = obj.name;
+  const look = { material: obj.material, castShadow: obj.castShadow, receiveShadow: obj.receiveShadow, renderOrder: obj.renderOrder,
+    frustumCulled: job.instances ? true : obj.frustumCulled, mask: job.instances ? 1 : obj.layers.mask };
+  const layer = { part, key, tolerance: job.tolerance, group, look, flat, built: new Map(), away: 0 };
+  stream.layers.push(layer);
+  return layer;
+}
+
+// The tiles wanted near (x, z) and not drawn, nearest first, as [layer, tile key]
+function wantedTiles(x, z, layers = stream.layers) {
+  const want = [];
+  for (const layer of layers) {
+    for (const k of layer.flat.keys()) {
+      if (layer.built.has(k)) continue;
+      const d = tileDistance(k, x, z);
+      if (d < stream.radius) want.push([d, layer, k]);
+    }
+  }
+  return want.sort((a, b) => a[0] - b[0]).map(([, layer, k]) => [layer, k]);
+}
+
+// Draws these tiles: read back or cut on several cores, then saved
+async function buildTiles(list) {
+  const { ground } = groundOfGrid(grid);
+  const names = list.map(([layer, k]) => `${layer.key}/${k}`);
+  const saved = await readTiles(names);
+  const missing = list.map((item, i) => [item, i]).filter(([, i]) => !saved[i]);
+  if (missing.length) {
+    const cut = await cutOnCores(ground, missing.map(([[layer, k]]) => ({ layer: layer.flat.get(k), tolerance: layer.tolerance })));
+    missing.forEach(([, i], n) => { saved[i] = cut[n]; });
+    writeTiles(missing.map(([, i]) => [names[i], saved[i]]));
+    stream.cut += missing.length;
+  }
+  list.forEach(([layer, k], i) => {
+    if (layer.built.has(k)) return;
+    const { look } = layer;
+    const mesh = new THREE.Mesh(geometryOfLayer(saved[i]), look.material);
+    mesh.castShadow = look.castShadow;
+    mesh.receiveShadow = look.receiveShadow;
+    mesh.renderOrder = look.renderOrder;
+    mesh.frustumCulled = look.frustumCulled;
+    mesh.layers.mask = look.mask;
+    mesh.name = layer.group.name;
+    mesh.userData.streamed = true;
+    layer.group.add(mesh);
+    mesh.updateMatrixWorld(true);
+    layer.built.set(k, mesh);
+  });
+  return missing.length;
+}
+
+// Every frame: the tiles the player has come near are drawn (a few at a time, one batch in hand), and those left more
+// than 400 m beyond the radius let go. Answers whether any were drawn or let go.
+const AWAY = 400, BATCH = 6;
+function updateGroundStreaming(x, z) {
+  if (!stream.radius || !stream.layers.length) return false;
+  stream.x = x; stream.z = z;
+  let changed = false;
+  for (const layer of stream.layers) {
+    // a part a change built again leaves its old layers out of the scene
+    let top = layer.group;
+    while (top.parent) top = top.parent;
+    layer.away = top.isScene ? 0 : layer.away + 1;
+    for (const [k, mesh] of layer.built) {
+      if (tileDistance(k, x, z) < stream.radius + AWAY) continue;
+      mesh.removeFromParent();
+      mesh.geometry.dispose();
+      layer.built.delete(k);
+      changed = true;
+    }
+  }
+  const before = stream.layers.length;
+  stream.layers = stream.layers.filter((layer) => layer.away < 600);
+  if (stream.layers.length < before) log(`[stream] let go of ${before - stream.layers.length} layers no longer drawn`);
+  if (!stream.busy) {
+    const want = wantedTiles(x, z, stream.layers.filter((layer) => !layer.away)).slice(0, BATCH);
+    if (want.length) {
+      stream.busy = true;
+      buildTiles(want).catch((error) => log(`[stream] ${error?.message || error}`)).finally(() => { stream.busy = false; });
+    }
+  }
+  return changed;
+}
+
+// Where the streaming is centred now: the player's last place, or where they start
+function groundStreamCenter() {
+  return { x: stream.x, z: stream.z };
+}
+
+// What's streamed now: tiles drawn, and their vertices
+function groundStreamStats() {
+  let tiles = 0, layers = 0;
+  for (const layer of stream.layers) { tiles += layer.built.size; layers++; }
+  return { layers, tiles, radius: stream.radius };
+}
+
 const IDENTITY = new THREE.Matrix4();
 const isIdentity = (m) => m.elements.every((v, i) => Math.abs(v - IDENTITY.elements[i]) < 1e-6);
 
@@ -926,6 +1091,33 @@ function setOnTerrain(root, tolerance = 0.04) {
   };
   if (!jobs.length) { finish(); return null; }
   const began = performance.now();
+  // Streamed, the big layers are drawn only near the player (streamGround): the tiles near them now are waited for
+  if (stream.radius) {
+    const { key: groundKey } = groundOfGrid(grid);
+    // (a layer of a few big triangles, a lawn, comes to millions of vertices once cut: only what's small on the map, or
+    // has few vertices over a small area, is drawn whole)
+    const big = jobs.filter((job) => {
+      if (job.instances) return true;
+      const geo = job.obj.geometry;
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      const { min, max } = geo.boundingBox;
+      return Math.max(max.x - min.x, max.z - min.z) > STREAM_TILE || geo.attributes.position.count > 2000;
+    });
+    const layers = big.map((job) => {
+      const layer = streamLayer(root.name, job, groundKey);
+      replace.push([job.obj, layer.group]);
+      return layer;
+    });
+    forgetOldTiles(root.name, layers.map((layer) => layer.key));
+    const rest = jobs.filter((job) => !big.includes(job));
+    jobs.length = 0;
+    jobs.push(...rest);
+    const near = wantedTiles(stream.x, stream.z, layers);
+    return Promise.all([rest.length ? drapeLayers(root.name, rest) : 0, buildTiles(near)]).then(([cut, cutTiles]) => {
+      finish();
+      log(`[drape] ${root.name}: ${rest.length} layers (${cut} cut), ${layers.length} streamed: ${near.length} tiles within ${stream.radius} m (${cutTiles} cut), in ${Math.round(performance.now() - began)} ms`);
+    });
+  }
   return drapeLayers(root.name, jobs).then((cut) => {
     finish();
     log(`[drape] ${root.name}: ${jobs.length} layers, ${jobs.length - cut} read back, ${cut} cut, in ${Math.round(performance.now() - began)} ms`);
@@ -949,5 +1141,6 @@ function drawOver(mat, lift = 0.06) {
 export {
   drawOver,
   loadTerrain, groundHeight, riverbedHeight, riverDepth, riverFlow, nearestWater, waterLevel, bridgeDecks, groundUnder, stadiumGround, groundSlope, groundTilt, groundHeightNode,
-  tessellate, drapeGeometry, liftGeometry, liftInstances, setOnTerrain
+  tessellate, drapeGeometry, liftGeometry, liftInstances, setOnTerrain,
+  streamGround, updateGroundStreaming, groundStreamStats, groundStreamCenter
 };

@@ -13,6 +13,7 @@ The wish itself, to open in [Lamp](https://lamp.dev) and change, is on the [main
 - Uses [NYC Open Data](https://opendata.cityofnewyork.us/overview/#termsofuse) by City of New York, LicenseRef-NYC-Open-Data
 - Uses [Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) by Mapzen, USGS, LicenseRef-USGS-Public-Domain
 - Uses [MTA Subway Entrances and Exits](https://data.ny.gov/Transportation/MTA-Subway-Entrances-and-Exits-2024/i9wp-a4ja) by Metropolitan Transportation Authority, LicenseRef-NY-Open-Data
+- Uses [ambientCG materials](https://ambientcg.com) by ambientCG (Lennart Demes), CC0-1.0
 - Uses [AAGIS Building Footprints](https://ckan.a2gov.org/dataset/building-footprints) by City of Ann Arbor, None
 - Uses [Street Trees](https://a2gov.org/services/data-catalog) by City of Ann Arbor, None
 - Uses [2023 Impervious Surfaces](https://a2maps.a2gov.org/a2arcgis/rest/services/ImperviousSurfaces/MapServer/7) by City of Ann Arbor, None

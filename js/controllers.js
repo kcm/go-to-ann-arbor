@@ -28,12 +28,13 @@ import { HEADLIGHTS, createVehicleHeadlight, placeVehicleHeadlight } from './veh
 import { bryantParkLawn } from './landmarks.js';
 import { groundHeight, groundTilt, nearestWater, riverDepth, riverFlow, stadiumGround, waterLevel } from './terrain.js';
 import { WATER_RIPPLES, waterDisturb } from './tsl-materials.js';
-import { cascadeCurrent, cascadeDepth, onWeirRocks, pondDraw } from './cascades.js';
+import { cascadeCurrent, cascadeDepth, inCascades, onWeirRocks, pondDraw } from './cascades.js';
 import { polygonContact, polygonContains } from './building-collision.js';
 import { vehicleContact, resolveVehicleContact } from './vehicle-physics.js';
 import { STADIUM, bowlSurface, carSurface, radiiAt } from './stadium-shape.js';
 import { hot, log, rumble } from '../lamp-game.js';
-import { MOTO_SPECS, buildMotoGeometry, buildMotoWheel, createMotoMaterial } from './motorcycles.js';
+import { dumpTruckGeo, excavatorGeo, truckWheelGeo, TRUCK_WHEELS } from './road-work.js';
+import { MOTO_SPECS, HELMET_OF, buildMotoGeometry, buildMotoWheel, buildHelmetGeometry, createMotoMaterial, motoRiderPose } from './motorcycles.js';
 
 // Player models, animation and movement for walking, driving, cycling and flying.
 
@@ -73,11 +74,21 @@ const CAR_HANDLING = {
   adventure: { mass: 320, speed: 52, acceleration: 7.5, powerSpeed: 18, brake: 9.5, grip: 11, cornering: 12, wheelbase: 1.55, steer: 12, roll: 0, pitch: 0.03 },
   // and what's borrowed from the bike lane: a bicycle, an e-scooter and a hoverboard, at their own gentle pace
   bicycle: { mass: 95, speed: 12, acceleration: 2.8, powerSpeed: 5, brake: 6, grip: 9, cornering: 10, wheelbase: 1.04, steer: 14, roll: 0, pitch: 0.02 },
+  // pedal-assisted to 28 mph, as a Class 3 e-bike is
+  ebike: { mass: 115, speed: 12.5, acceleration: 4.2, powerSpeed: 9, brake: 6.5, grip: 9.5, cornering: 10, wheelbase: 1.12, steer: 14, roll: 0, pitch: 0.02 },
   escooter: { mass: 92, speed: 11, acceleration: 3, powerSpeed: 5, brake: 5.5, grip: 8.5, cornering: 10, wheelbase: 0.84, steer: 16, roll: 0, pitch: 0.02 },
   hoverboard: { mass: 85, speed: 6.5, acceleration: 2.6, powerSpeed: 3, brake: 5, grip: 9, cornering: 13, wheelbase: 0.5, steer: 22, roll: 0, pitch: 0.015 },
+  // the road work's machines (road-work.js): a loaded tandem dump truck, slow to get going and wide in a turn, and a
+  // tracked excavator that crawls along and turns nearly on the spot
+  dumptruck: { mass: 16000, speed: 27, acceleration: 2.4, powerSpeed: 8, brake: 6, grip: 6.5, cornering: 6.2, wheelbase: 5.3, steer: 5, roll: 0.022, pitch: 0.03 },
+  excavator: { mass: 21000, speed: 4.5, acceleration: 1.6, brake: 6, grip: 7, cornering: 16, wheelbase: 0.9, steer: 6, roll: 0.004, pitch: 0.012 },
   sports: { mass: 1450, speed: 76, acceleration: 9.5, powerSpeed: 30, brake: 12, drag: 0.0006, grip: 15, cornering: 17, wheelbase: 2.72, steer: 16, roll: 0.007, pitch: 0.016 }
 };
 // Lamp: a game's cars turn in sharper than the real ones' figures above: more grip in a bend, a quicker wheel
+// what the player's car is now, for its size against walls and other cars: [half width, half length]
+const MACHINE_BOX = { dumptruck: [1.3, 4.6], excavator: [1.45, 2.4] };
+const playerBox = [0.86, 2.18];
+const MACHINES = { dumptruck: 'Dump Truck', excavator: 'Excavator' };
 const carDrive = (kind) => {
   const d = { mass: 1500, steer: 10, roll: 0.012, pitch: 0.026, ...CAR_DRIVE, ...CAR_HANDLING[kind] };
   d.grip *= 1.3; d.cornering *= 1.45; d.steer *= 1.6;
@@ -121,7 +132,7 @@ const hash01 = (x) => { const v = Math.sin(x * 127.1 + 311.7) * 43758.5453; retu
 function collisionBody(mode, radius, heading, margin = 0) {
   const car = mode === 'car';
   const sin = Math.sin(heading), cos = Math.cos(heading);
-  const hx = 0.86 + margin, hz = 2.18 + margin;
+  const hx = playerBox[0] + margin, hz = playerBox[1] + margin;
   return {
     car, sin, cos, hx, hz, radius: radius + margin,
     extX: car ? Math.abs(cos) * hx + Math.abs(sin) * hz : radius + margin,
@@ -444,6 +455,8 @@ class ThirdPersonControllerManager {
       this.updateRipples(this.entities.kayak, 0);
     }
     const car = this.entities.car;
+    // a car left with a bike's ways by an earlier swap loses them
+    if (car?.bike && this.carLook && !MOTO_SPECS[this.carLook.kind]) { car.riderMesh?.removeFromParent(); delete car.bike; delete car.quiet; delete car.riderMesh; delete car.riderPose; }
     if (mode !== 'car' && car?.carState) car.carState.value.x = car.carState.value.w = 0;
     if (car?.riderMesh) car.riderMesh.visible = mode === 'car';
   }
@@ -457,8 +470,13 @@ class ThirdPersonControllerManager {
     this.resetInput();
     if (!Number.isFinite(heading)) heading = ent.heading;
     if (this.activeMode === 'kayak') {
-      const water = Number.isFinite(x) && Number.isFinite(z) ? nearestWater(x, z, 2500) : null;
-      if (water) {
+      // in the Argo Cascades' channel, shallower than the river, it stays where it was put and faces as it was asked
+      const inChannel = Number.isFinite(x) && Number.isFinite(z) && inCascades(x, z);
+      const water = inChannel ? null : Number.isFinite(x) && Number.isFinite(z) ? nearestWater(x, z, 2500) : null;
+      if (inChannel) {
+        ent.position.set(x, waterLevel(x, z) ?? ent.position.y, z);
+        ent.heading = heading;
+      } else if (water) {
         ent.position.set(water.x, waterLevel(water.x, water.z) ?? ent.position.y, water.z);
         ent.heading = this.downstreamHeading(water.x, water.z, heading);
       }
@@ -618,7 +636,9 @@ class ThirdPersonControllerManager {
   // 2. CAR (3D LOFTED BLACK COMPACT SUV, A SUBARU FORESTER'S LINES: ROOF RAILS, BLACK CLADDING)
   // =========================================================================
   createCarEntity(look = OWN_CAR, root = new THREE.Group(), reuseLights = null) {
+    playerBox[0] = MACHINE_BOX[look.kind]?.[0] ?? 0.86; playerBox[1] = MACHINE_BOX[look.kind]?.[1] ?? 2.18;
     if (MOTO_SPECS[look.kind]) return this.createBikeEntity(look, root, reuseLights);
+    if (MACHINES[look.kind]) return this.createMachineEntity(look, root, reuseLights);
     root.name = 'PlayerCar';
     const own = isOwnCar(look);
 
@@ -731,13 +751,16 @@ class ThirdPersonControllerManager {
     const chassisPivot = new THREE.Group();
     root.add(chassisPivot);
     const mat = createMotoMaterial(look.hex);
-    const body = new THREE.Mesh(buildMotoGeometry(spec, true, false, 'without'), mat);
+    const body = new THREE.Mesh(buildMotoGeometry(spec, true, false), mat);
     body.castShadow = body.receiveShadow = true;
     chassisPivot.add(body);
-    // the rider apart from the bike, so they can be thrown off it and the bike left standing empty
-    const riderMesh = new THREE.Mesh(buildMotoGeometry(spec, true, false, 'only'), mat);
+    // the player rides it themselves (their person posed on it, poseCharacters), in a helmet the bike's colour; it
+    // shows only while they're on it
+    const helmet = HELMET_OF[look.kind];
+    const riderMesh = helmet ? new THREE.Mesh(buildHelmetGeometry(helmet), mat) : new THREE.Group();
     riderMesh.castShadow = true;
-    chassisPivot.add(riderMesh);
+    riderMesh.visible = false;
+    this.scene.add(riderMesh);
     const wheels = [];
     for (const front of [true, false]) {
       const steerPivot = new THREE.Group();
@@ -767,19 +790,78 @@ class ThirdPersonControllerManager {
     }
     if (!root.parent) this.scene.add(root);
     const names = { sportbike: 'Sport Bike', cruiser: 'Cruiser', scooter: 'Scooter', touring: 'Touring Bike', adventure: 'Adventure Bike',
-      bicycle: 'Bicycle', escooter: 'E-Scooter', hoverboard: 'Hoverboard' };
+      bicycle: 'Bicycle', ebike: 'E-Bike', escooter: 'E-Scooter', hoverboard: 'Hoverboard' };
     return {
       type: 'car',
       bike: true,
       quiet: !!spec.quiet,
       label: `Borrowed ${names[look.kind]}`,
-      mesh: root, chassisPivot, riderMesh, carState: mat.userData.carState, headLights, wheels,
+      mesh: root, chassisPivot, riderMesh, riderPose: motoRiderPose(look.kind), carState: mat.userData.carState, headLights, wheels,
       position: new THREE.Vector3(-19.2, 0.0, SPAWN_Z + 12), prevX: -19.2, prevZ: SPAWN_Z + 12,
       heading: Math.PI, speed: 0, vx: 0, vz: 0, angularVel: 0, pitchVel: 0, rollVel: 0, heaveY: 0, heaveVel: 0,
       lastCollisionSpark: null, steerAngle: 0, wheelSpin: 0,
       cameraTargetOffset: new THREE.Vector3(0, 0.9, 0),
       chaseDistance: 4.8,
       chaseHeight: 1.7,
+      drive: carDrive(look.kind)
+    };
+  }
+
+  // A dump truck or an excavator from the road work, driven as the car is: the same model as the ones at the digs, in
+  // their worn, muddy material; the truck's wheels turn and its front pair steers, the excavator crawls on its tracks
+  createMachineEntity(look, root, reuseLights = null) {
+    root.name = 'PlayerCar';
+    const truck = look.kind === 'dumptruck';
+    const mat = this.roadWork?.material || new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.7 });
+    const chassisPivot = new THREE.Group();
+    root.add(chassisPivot);
+    const body = new THREE.Mesh(truck ? (this._truckGeo ??= dumpTruckGeo(false)) : (this._excavatorGeo ??= excavatorGeo()), mat);
+    body.castShadow = body.receiveShadow = true;
+    chassisPivot.add(body);
+    const wheels = [];
+    if (truck) {
+      for (const w of TRUCK_WHEELS) {
+        const side = Math.sign(w.x);
+        const steerPivot = new THREE.Group();
+        steerPivot.position.set(w.x, 0.54, w.z);
+        const key = `_truckWheel${w.front ? 'F' : 'R'}${side}`;
+        const tire = new THREE.Mesh(this[key] ??= truckWheelGeo(!!w.front, side), mat);
+        tire.castShadow = tire.receiveShadow = true;
+        steerPivot.add(tire);
+        root.add(steerPivot);
+        wheels.push({ steerPivot, tire, isFront: !!w.front });
+      }
+    }
+    const [hw, hl] = MACHINE_BOX[look.kind];
+    const shadowGeo = new THREE.PlaneGeometry(hw * 2 + 0.3, hl * 2 + 0.4);
+    shadowGeo.rotateX(-Math.PI * 0.5);
+    const shadow = new THREE.Mesh(shadowGeo, createContactShadowMaterial());
+    shadow.position.set(0, 0.02, truck ? -0.1 : 0);
+    shadow.renderOrder = 998;
+    root.add(shadow);
+    // the truck's headlamps in its fenders; the excavator's work lamps on its house
+    const lamp = truck ? { headlight: [0.98, 1.42], zFront: 4.36 } : { headlight: [0.7, 2.2], zFront: 0.75 };
+    const headLights = [];
+    for (const side of [-1, 1]) {
+      const old = reuseLights?.[side < 0 ? 0 : 1];
+      const spot = old || createVehicleHeadlight();
+      placeVehicleHeadlight(spot, lamp, side);
+      if (!old || old.parent) chassisPivot.add(spot, spot.target);
+      headLights.push(spot);
+    }
+    if (!root.parent) this.scene.add(root);
+    return {
+      type: 'car',
+      machine: look.kind,
+      boxW: hw, boxL: hl,
+      label: MACHINES[look.kind],
+      mesh: root, chassisPivot, carState: null, headLights, wheels,
+      position: new THREE.Vector3(-19.2, 0.0, SPAWN_Z + 12), prevX: -19.2, prevZ: SPAWN_Z + 12,
+      heading: Math.PI, speed: 0, vx: 0, vz: 0, angularVel: 0, pitchVel: 0, rollVel: 0, heaveY: 0, heaveVel: 0,
+      lastCollisionSpark: null, steerAngle: 0, wheelSpin: 0,
+      cameraTargetOffset: new THREE.Vector3(0, truck ? 2.4 : 2.6, 0),
+      chaseDistance: truck ? 14 : 12,
+      chaseHeight: truck ? 4.6 : 5,
       drive: carDrive(look.kind)
     };
   }
@@ -1031,13 +1113,17 @@ class ThirdPersonControllerManager {
   // The player's car becomes another (a parked car they got into): its body, paint and lights made again on the same root
   restyleCar(look) {
     const car = this.entities.car;
-    if (!look || !(BODY_SPECS[look.kind] || MOTO_SPECS[look.kind])) return;
+    if (!look || !(BODY_SPECS[look.kind] || MOTO_SPECS[look.kind] || MACHINES[look.kind])) return;
     const root = car.mesh;
     const lights = car.headLights;
     for (const spot of lights || []) { spot.removeFromParent(); spot.target.removeFromParent(); }
     for (const child of [...root.children]) root.remove(child);
     const fresh = this.createCarEntity(look, root, lights);
     const { position, heading } = car;
+    // what only a bike has goes with it, so a car after a bike neither leans like one nor throws its driver
+    car.riderMesh?.removeFromParent();
+    delete car.bike; delete car.quiet; delete car.riderMesh; delete car.riderPose; delete car.machine; delete car.boxW; delete car.boxL;
+    this._motoThrow = 0;
     Object.assign(car, fresh, { position, heading, prevX: position.x, prevZ: position.z });
     root.traverse((child) => {
       if (child.isMesh && !child.material?.transparent && !child.material?.isMeshBasicNodeMaterial) {
@@ -1254,6 +1340,9 @@ class ThirdPersonControllerManager {
     }
     const near = parked?.nearest(p.position.x, p.position.z, 4.2);
     if (near) consider('car', near.x, near.z, 4.2, near);
+    // a dump truck or excavator at the road work, from beside its cab or tracks
+    const mach = this.roadWork?.nearestMachine(p.position.x, p.position.z, 2.5);
+    if (mach && mach.d / 2.5 < score) { score = mach.d / 2.5; best = { mode: 'car', machine: mach }; }
     // a car going by in traffic (traffic.js), within reach
     const passing = traffic?.nearestCar(p.position.x, p.position.z, 5);
     if (passing != null && passing / 5 < score) { score = passing / 5; best = { mode: 'car', moving: true }; }
@@ -1271,8 +1360,9 @@ class ThirdPersonControllerManager {
   }
 
   getGroundHeight(x, z, mode = 'person') {
-    // Lamp: the ground's own height there (terrain.js), with what's laid on it
-    const ground = groundHeight(x, z);
+    // Lamp: the ground's own height there (terrain.js), with what's laid on it, and up on a road work's dirt pile
+    // (road-work.js pileTop), which is driven and walked over like a ramp
+    const ground = Math.max(groundHeight(x, z), mode === 'kayak' ? -Infinity : (this.roadWork?.pileTop(x, z) ?? -Infinity));
     // Inside a big park drawn on its own (none in Ann Arbor: city-config.js BIG_PARK_BOUNDS is far away)
     const cp = BIG_PARK_BOUNDS;
     if (x > cp.minX && x < cp.maxX && z > cp.minZ && z < cp.maxZ) {
@@ -1454,7 +1544,7 @@ class ThirdPersonControllerManager {
         const dx = pos.x - m.position.x, dz = pos.z - m.position.z, reach = tc.L / 2 + 4;
         if (dx * dx + dz * dz > reach * reach || Math.abs(pos.y - m.position.y) > 4) continue;
         const yaw = m.rotation.y, ts = Math.sin(yaw), tcs = Math.cos(yaw), v = (t.v || 0) * (t.dir || 1);
-        Object.assign(a, { x: pos.x, z: pos.z, sin, cos, halfW: 0.86, halfL: 2.18, mass: car.drive?.mass || 1500,
+        Object.assign(a, { x: pos.x, z: pos.z, sin, cos, halfW: playerBox[0], halfL: playerBox[1], mass: car.drive?.mass || 1500,
           vx: sin * car.speed + (car.vx || 0), vz: cos * car.speed + (car.vz || 0), angularVel: car.angularVel || 0 });
         Object.assign(b, { x: m.position.x, z: m.position.z, sin: ts, cos: tcs, halfW: 1.55, halfL: tc.L / 2, mass: 0,
           vx: ts * v, vz: tcs * v, angularVel: 0 });
@@ -1480,7 +1570,7 @@ class ThirdPersonControllerManager {
   shoveParked(p, pos, car, entity, sin, cos) {
     const a = this._shoveA ??= {}, b = this._shoveB ??= {}, hit = this._shoveHit ??= {};
     const mass = car.drive?.mass || 1500;
-    Object.assign(a, { x: pos.x, z: pos.z, sin, cos, halfW: 0.86, halfL: 2.18, mass,
+    Object.assign(a, { x: pos.x, z: pos.z, sin, cos, halfW: playerBox[0], halfL: playerBox[1], mass,
       vx: sin * car.speed + (car.vx || 0), vz: cos * car.speed + (car.vz || 0), angularVel: car.angularVel || 0 });
     const o = p.collider.obb;
     Object.assign(b, { x: o.cx, z: o.cz, sin: o.sn, cos: o.cs, halfW: p.halfW, halfL: p.halfL, mass: p.mass,
@@ -1552,7 +1642,21 @@ class ThirdPersonControllerManager {
     if (p) {
       const dx = focus ? p.position.x - focus.x : 0;
       const dz = focus ? p.position.z - focus.z : 0;
-      if (!p.riding && (this.activeMode === 'person' || dx * dx + dz * dz <= maxDistSq)) {
+      const c = this.entities.car;
+      if (this.activeMode === 'car' && c?.riderPose && (!p.riding || p.riding === 'car')) {
+        // on a motorbike or a scooter: sat on it (or standing on its deck), helmet on
+        p._charHidden = false;
+        p.rig.perch(c.chassisPivot, c.riderPose);
+        p.crowd.begin();
+        p.crowd.add(p.rig, 0);
+        p.crowd.end();
+        const h = c.riderMesh;
+        h.visible = true;
+        h.position.copy(p.rig.headPosition);
+        h.quaternion.copy(p.rig.headQuaternion);
+        h.scale.setScalar(p.rig.s);
+        h.updateMatrixWorld(true);
+      } else if (!p.riding && (this.activeMode === 'person' || dx * dx + dz * dz <= maxDistSq)) {
         p._charHidden = false;
         if (p.mesh) p.mesh.visible = true;
         const air = p.position.y - this.getGroundHeight(p.position.x, p.position.z, 'person');
@@ -1683,7 +1787,9 @@ class ThirdPersonControllerManager {
           if (e.airborne) {
             e.airRoll *= Math.exp(-dt * 1.5);
             pitch = e.airPitch; roll = e.airRoll;
-          } else if (carSurface(e.position.x, e.position.z) !== null) {
+          } else if (carSurface(e.position.x, e.position.z) !== null || this.roadWork?.pileTop(e.position.x, e.position.z) > -Infinity
+            || this.roadWork?.pileTop(e.position.x + Math.sin(e.heading) * 2.1, e.position.z + Math.cos(e.heading) * 2.1) > -Infinity
+            || this.roadWork?.pileTop(e.position.x - Math.sin(e.heading) * 2.1, e.position.z - Math.cos(e.heading) * 2.1) > -Infinity) {
             const s = Math.sin(e.heading), co = Math.cos(e.heading), g = (dx, dz) => this.getGroundHeight(e.position.x + dx, e.position.z + dz, 'car');
             pitch = Math.atan2(g(s * 2.1, co * 2.1) - g(-s * 2.1, -co * 2.1), 4.2);
             roll = Math.atan2(g(-co * 0.9, s * 0.9) - g(co * 0.9, -s * 0.9), 1.8);
@@ -2007,7 +2113,9 @@ class ThirdPersonControllerManager {
     if (ul > 1e-4) {
       const bx = x - (ux / ul) * back, bz = z - (uz / ul) * back;
       const behind = Math.max(this.getGroundHeight(bx, bz, 'car'), this.carRoof(c, bx, bz, prevY, false));
-      slopeVy = Math.max(-0.45, Math.min(0.45, (ground - behind) / back)) * (ul / dt);
+      // up a dirt pile's ramp (road-work.js) it climbs its full slope, so it flies off the top
+      const steep = this.roadWork?.pileTop(x, z) > -Infinity ? 0.7 : 0.45;
+      slopeVy = Math.max(-0.45, Math.min(steep, (ground - behind) / back)) * (ul / dt);
     }
     const ballistic = prevY + c.vy * dt - 4.9 * dt * dt;
     // fast over a crest it flies; off a roof's edge (or anything well above the ground) it drops at any speed

@@ -1,3 +1,4 @@
+import { TIER } from './device-tier.js';
 import * as THREE from 'three/webgpu';
 import { buildRoadNetwork } from './road-network.js';
 import { planClosures } from './road-work.js';
@@ -28,14 +29,16 @@ import {
   createLoftedBusMaterial
 } from './bus.js';
 import { groundHeight, groundTilt } from './terrain.js';
-import { MOTO_SPECS, buildMotoGeometry, createMotoMaterial } from './motorcycles.js';
+import { MOTO_SPECS, HELMET_OF, HELMET_PAINTS, buildMotoGeometry, buildHelmetGeometry, createMotoMaterial, motoRiderPose } from './motorcycles.js';
+import { PersonCrowd, PersonRig } from './pedestrians.js';
 import { loadTheRide, createSchedule, buildStopSigns } from './theride.js';
 
 // Cars and buses follow the road graph, obey signals, yield at crossings and react to collisions.
 // Vehicles replenish around the player; pedestrian-system.js manages the nearby walking population.
 
-const NUM_CARS = 70; // Ann Arbor: a quiet college town, not Manhattan
-const NUM_BUSES = 16; // Lamp: TheRide's buses on the road near the player, as the timetable has them (theride.js)
+// Ann Arbor: a quiet college town, not Manhattan; fewer on a phone (device-tier.js)
+const NUM_CARS = Math.round(70 * TIER.traffic);
+const NUM_BUSES = Math.round(16 * Math.max(0.75, TIER.traffic)); // Lamp: TheRide's buses on the road near the player, as the timetable has them (theride.js)
 
 // Intelligent Driver Model: max acceleration, comfortable braking, time headway, standstill gap; the sideways
 // acceleration drivers accept in bends, which sets how fast they take each turn or lane shift; and how hard they brake
@@ -284,6 +287,31 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   }
   const bodyMeshes = Object.values(bodies).flatMap((b) => [b.near, b.far]);
 
+  // The people on the bikes and scooters: the town's pedestrians (pedestrians.js), each dressed their own way, posed
+  // on the bike while near enough to see them; and the helmets on their heads, in the body meshes' instancing
+  const motoCars = cars.filter((c) => c.moto);
+  const riderCrowd = new PersonCrowd(Math.max(1, motoCars.length), { farDistance: 40 });
+  const helmets = {};
+  motoCars.forEach((c, k) => {
+    const h = (n) => ((k + 1) * n) % 1;
+    c.riderRig = new PersonRig({ seed: 41 + k * 5.17, scale: 0.93 + h(0.618) * 0.13, female: h(0.377) < 0.35,
+      girth: 0.92 + h(0.271) * 0.2, hair: h(0.733) * 0.5 });
+    const helmet = HELMET_OF[c.bodyType];
+    if (!helmet) return;
+    const col = new THREE.Color(HELMET_PAINTS[(k * 3 + 1) % HELMET_PAINTS.length]);
+    c.helmetPaint = [Math.fround(col.r), Math.fround(col.g), Math.fround(col.b)];
+    helmets[helmet] = (helmets[helmet] || 0) + 1;
+  });
+  for (const [type, n] of Object.entries(helmets)) {
+    const g = buildHelmetGeometry(type);
+    g.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3));
+    g.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4));
+    helmets[type] = new THREE.InstancedMesh(g, createMotoMaterial(), n);
+    bodyMeshes.push(helmets[type]);
+  }
+  const RIDER_DISTANCE = 220;
+  const _helmetScale = new THREE.Vector3();
+
   const carWheelLeftInst = new THREE.InstancedMesh(carWheelLeftGeo, carWheelMat, NUM_CARS * 2);
   const carWheelRightInst = new THREE.InstancedMesh(carWheelRightGeo, carWheelMat, NUM_CARS * 2);
   carWheelRightInst.userData.sharesPipelineWith = carWheelLeftInst;
@@ -338,6 +366,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
 
   group.add(
     ...bodyMeshes,
+    ...riderCrowd.meshes,
     carWheelLeftInst,
     carWheelRightInst,
     sparkInst,
@@ -1751,6 +1780,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
     bodyInst.setMatrixAt(slot, dummy.matrix);
+    if (c.riderRig) poseRider(c, Math.hypot(c.x - camX, c.z - camZ));
     if (c.isPolice) {
       const lb = policeLightbars[c.bodyType];
       if (lb) lb.setMatrixAt(policeDrawn[c.bodyType]++, dummy.matrix);
@@ -1814,6 +1844,24 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
         dirtyWheelStyles = true;
       }
       placeWheels(c, wheelCars++, rotY, c.roll, spec.wheelRadius, spec.wheelX, spec.wheelZ, carWheelLeftInst, carWheelRightInst);
+    }
+  }
+
+  // A bike's rider sat on it (the body's transform in `dummy`) and their helmet on their head
+  function poseRider(c, d) {
+    if (d > RIDER_DISTANCE) return;
+    const rig = c.riderRig;
+    rig.perch(dummy, motoRiderPose(c.bodyType));
+    riderCrowd.add(rig, d);
+    const inst = helmets[HELMET_OF[c.bodyType]];
+    if (!inst) return;
+    const slot = inst.count++;
+    dummy.matrix.compose(rig.headPosition, rig.headQuaternion, _helmetScale.setScalar(rig.s));
+    inst.setMatrixAt(slot, dummy.matrix);
+    const paint = inst.geometry.attributes.paintColor.array, o3 = slot * 3, p = c.helmetPaint;
+    if (paint[o3] !== p[0] || paint[o3 + 1] !== p[1] || paint[o3 + 2] !== p[2]) {
+      paint.set(p, o3);
+      dirtyPaint.add(inst);
     }
   }
 
@@ -2013,8 +2061,8 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
       player.vx = player.fx * speed + (playerEntity.vx || 0);
       player.vz = player.fz * speed + (playerEntity.vz || 0);
     }
-    player.halfW = activeMode === 'cyclist' ? 0.35 : activeMode === 'person' ? 0.32 : 0.86;
-    player.halfL = activeMode === 'cyclist' ? 0.85 : activeMode === 'person' ? 0.32 : 2.18;
+    player.halfW = activeMode === 'cyclist' ? 0.35 : activeMode === 'person' ? 0.32 : playerEntity?.boxW ?? 0.86;
+    player.halfL = activeMode === 'cyclist' ? 0.85 : activeMode === 'person' ? 0.32 : playerEntity?.boxL ?? 2.18;
 
     // 1. Cars & buses
     // Limit attempted placements, not just successes, and rotate through the pool so an awkward location
@@ -2057,11 +2105,13 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
       for (const v of vehicles) if (v.edge) collideWithPlayer(v);
     }
     collideTraffic();
+    riderCrowd.begin();
     for (const v of vehicles) {
       if (!v.edge) continue;
       if (v.bus) renderBus(v);
       else renderCar(v);
     }
+    riderCrowd.end();
     const hideEmpty = ++updates > 2;
     for (const m of bodyMeshes) {
       const n = m.count;

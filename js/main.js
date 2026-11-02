@@ -21,6 +21,8 @@ import { buildTrafficControls } from './traffic-controls.js';
 import { buildShopSigns } from './shop-signs.js';
 import { ThirdPersonControllerManager } from './controllers.js';
 import { TouchControls } from './touch-controls.js';
+import { reportMemory } from './memory-report.js';
+import { TIER } from './device-tier.js';
 import { GamepadControls } from './gamepad-controls.js';
 import { CameraSystem, CAMERA_PRESETS } from './cameras.js';
 import { LightingSystem, sunTimes } from './lighting.js';
@@ -29,8 +31,8 @@ import { createHydrantSpray } from './hydrant-spray.js';
 import { createSkidEffects } from './skid-effects.js';
 import { CityMapSystem } from './city-map.js';
 import { setupSceneCulling, updateSceneCulling, cullAlso, showShadowStandIns } from './scene-culling.js';
-import { loadTerrain, setOnTerrain, groundHeight, waterLevel } from './terrain.js';
-import { buildCascades } from './cascades.js';
+import { loadTerrain, setOnTerrain, groundHeight, waterLevel, streamGround, updateGroundStreaming } from './terrain.js';
+import { buildCascades, CASCADE_START } from './cascades.js';
 import { buildRiverPeople } from './river-people.js';
 import { CityAudioSystem } from './audio-system.js';
 import { fetchWeather, createPrecipitation } from './weather.js';
@@ -92,17 +94,20 @@ async function initApp() {
   // Lamp: what a Mac draws. WebKit compiles the WebGPU path's shaders for 20-50 s before the first frame, and the
   // WebGL 2 one in a few, so it draws with WebGL 2. The clustered street, shop and car lights and the reflections
   // add ~8 s more to the start and are left off. Lamp's runtime draws it at 1920x1080 wherever it's played.
+  // On a phone or tablet (device-tier.js) it draws without shadows or the glow, smaller, and builds less of the city.
   const QUALITY = {
-    antialias: true,
-    shadows: true,
+    tier: TIER.name,
+    phone: TIER.name === 'phone',
+    antialias: TIER.antialias,
+    shadows: TIER.shadows,
     streetLights: false,
     reflections: false,
-    bloom: true,
-    outskirts: true
+    bloom: TIER.bloom,
+    outskirts: TIER.outskirts
   };
   // Kept through a change: a new one would compile every shader again.
   const renderer = await live.keep('renderer', async () => {
-    const made = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance', reversedDepthBuffer: true, forceWebGL: true });
+    const made = new THREE.WebGPURenderer({ antialias: QUALITY.antialias, powerPreference: 'high-performance', reversedDepthBuffer: true, forceWebGL: true });
     await made.init();
     return made;
   });
@@ -151,6 +156,13 @@ async function initApp() {
   await showLoadingStage('Reading the ground\'s heights...');
   const heights = await loadTerrain();
   markInit('terrain');
+  // On a phone, or a Mac without much memory (device-tier.js), the ground is built only around where the player starts
+  // and filled in as they go (the frame below): where the last play left them, else the car's start on Main St
+  {
+    const saved = load('player');
+    const at = (saved?.version === 2 && saved.entities?.[saved.activeMode]) || { x: -23, z: 228 };
+    streamGround(TIER.stream, Number.isFinite(at.x) ? at.x : -23, Number.isFinite(at.z) ? at.z : 228);
+  }
   // 3. Build Ann Arbor's Geography, Landmarks, Blocks, Street Details & Traffic
   // Lamp: each part of the city is built into a group of its own, set on the ground and cut for culling there
   // (cityPart), and kept through a change that isn't its own (see the top of this file): `inputs` are what it's built
@@ -166,7 +178,7 @@ async function initApp() {
   function finishPart(group, made, cull) {
     // Island-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
     // (scene-culling.js)
-    const culled = cull ? cull(group, [group], true) : [];
+    const culled = cull ? cull(group, [group], QUALITY.shadows) : []; // no stand-ins without shadows
     return {
       group, made, culled,
       dispose() {
@@ -306,6 +318,8 @@ async function initApp() {
   }
   // What a part hooks on its scene's renders is on its group, which three.js never calls (the trees follow the view
   // camera for their level of detail, trees.js): the scene calls it for each part.
+  // the houses near the player, on a phone (houses.js streamHouses)
+  const houseStream = blocks.group.getObjectByName('AnnArborHouses')?.userData.stream;
   const partHooks = parts.map((part) => part.group).filter((g) => g.onBeforeRender !== THREE.Object3D.prototype.onBeforeRender);
   scene.onBeforeRender = (...args) => { for (const g of partHooks) g.onBeforeRender(...args); };
   markInit('ground');
@@ -315,6 +329,7 @@ async function initApp() {
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders);
   controllerManager.knockdowns = knockdowns;
   controllerManager.parkedCars = parkedCars;
+  controllerManager.roadWork = roadWork;
   controllerManager.railways = railways;
   // the maize sports car, or the black Forester it was before (an older save's own car)
   const isOwnLook = (look) => (look.kind === 'sports' && look.hex === 0xffcb05) || (look.kind === 'forester' && look.hex === 0x16181b);
@@ -333,8 +348,8 @@ async function initApp() {
     cyclist: { x: 660, z: 529, heading: Math.PI / 2 },
     // high over Stadium Blvd south of the Big House, the stadium below and downtown beyond it
     helicopter: { x: -30, z: 1950, heading: Math.PI, above: 130 },
-    // on Argo Pond just above the Argo Cascades, facing the channel's head where it leaves the pond
-    kayak: { x: 202.9, z: -1266.4, heading: 1.188 }
+    // in the Argo Cascades' channel just above its first drop, facing down it (cascades.js)
+    kayak: { ...CASCADE_START }
   };
 
   // Reuse teleport placement so saved players return at rest, close to their last positions.
@@ -362,6 +377,9 @@ async function initApp() {
       controllerManager.setMode(Object.hasOwn(controllerManager.entities, saved.activeMode) ? saved.activeMode : 'car');
       // the car the player drives (one taken from a parking spot or traffic), and whether they're in something
       if (saved.carLook && !isOwnLook(saved.carLook)) controllerManager.restyleCar(saved.carLook);
+      // the machine they drove off in is no longer at its dig
+      const sc = saved.entities?.car;
+      if (controllerManager.entities.car.machine && sc && !roadWork.held) roadWork.claim(saved.carLook.kind, sc.x, sc.z);
       if (saved.activeMode !== 'person' && Object.hasOwn(controllerManager.entities, saved.activeMode)) {
         controllerManager.entities.person.riding = saved.activeMode;
         controllerManager.entities[saved.activeMode].leftEmpty = false;
@@ -464,6 +482,10 @@ async function initApp() {
     if (group) group.visible = false;
   }
   console.log(`[quality] ${JSON.stringify(QUALITY)}`);
+  reportMemory(scene, renderer, log, TIER.name !== 'full');
+  { const odd = []; scene.getObjectByName('CityGrid')?.traverse((o) => { if (o.isMesh && !o.name && !o.userData.streamed) odd.push(o); }); odd.sort((p, q) => q.geometry.attributes.position.count - p.geometry.attributes.position.count); if (!odd[0]?.geometry.boundingSphere) odd.forEach((o) => o.geometry.computeBoundingSphere()); log('[temp odd] ' + odd.slice(0, 8).map((o) => `${o.geometry.attributes.position.count}v r${Math.round(o.geometry.boundingSphere.radius)} at ${Math.round(o.geometry.boundingSphere.center.x)},${Math.round(o.geometry.boundingSphere.center.z)} parent ${o.parent?.name || o.parent?.type} ${o.material.color?.getHexString()} ${o.material.uuid.slice(0, 4)}`).join(' | ')); } // TEMP
+  { const per = new Map(), seen = new Set(); for (const nm of ['CityGrid', 'CityBlocks', 'StreetDetails']) scene.getObjectByName(nm)?.traverse((o) => { if (!o.geometry || seen.has(o.geometry)) return; seen.add(o.geometry); let b = 0; for (const at of [...Object.values(o.geometry.attributes), o.geometry.index].filter(Boolean)) b += at.array.byteLength; if (o.isInstancedMesh) b += o.instanceMatrix.array.byteLength; const k = nm + '/' + (o.name || o.parent?.name || ('?' + (o.material?.name || o.material?.type) + (o.geometry.index ? 'ix' : '') + Object.keys(o.geometry.attributes).join(''))) + (o.userData.streamed ? '[s]' : '') + (o.isInstancedMesh ? '[i]' : ''); const e = per.get(k) || [0, 0]; e[0] += b; e[1]++; per.set(k, e); });
+    log('[temp mem] ' + [...per].sort((a, b) => b[1][0] - a[1][0]).slice(0, 30).map(([k, [b, n]]) => `${k} ${(b / 1048576).toFixed(0)}x${n}`).join(', ')); } // TEMP
 
   // On WebGPU, small InstancedMeshes (<= 1000 instances) keep their matrices in uniform buffers that three.js
   // re-uploads on every draw of every pass (~2.5 MB/frame with the shadow cascades, stalling the GPU queue).
@@ -657,6 +679,44 @@ async function initApp() {
     selectMode(mode);
     if (!close) goToStart(mode);
   }
+  // Reset game: every way of getting around back at its own start, the player in their own car on Main St, the time
+  // back to now and what earlier plays left behind (parked cars swapped) forgotten
+  function resetGame() {
+    const cm = controllerManager;
+    const p = cm.entities.person;
+    p.fallen = null;
+    if (p.rig) p.rig.ragdolling = false;
+    p.riding = null;
+    cm.setMode('person');
+    if (!isOwnLook(cm.carLook)) cm.restyleCar({ kind: 'sports', hex: 0xffcb05, style: 0 });
+    roadWork.home();
+    cm._colliderCells = null;
+    for (const [mode, s] of Object.entries(SCENIC_STARTS)) {
+      const e = cm.entities[mode];
+      if (!e) continue;
+      cm.setMode(mode);
+      e.leftEmpty = false;
+      cm.teleportActiveTo(s.x, s.z, s.heading, s.above ? groundHeight(s.x, s.z) + s.above : null);
+      if (mode === 'kayak') { e.heading = s.heading; e.mesh.rotation.y = s.heading; }
+      if (mode === 'car') cm.stopCar(e);
+    }
+    p.riding = 'car';
+    selectMode('car');
+    parkedCars.history.length = 0;
+    selectTime('now');
+    touchControls.reset();
+    gamepadControls.reset();
+    cameraSystem.resetForTeleport();
+    selectCamera('chase', true);
+    savePlayerState();
+    log('[reset] game reset to its start');
+    showNotice('Back to the start');
+  }
+  document.getElementById('reset-confirm')?.addEventListener('click', () => {
+    closePopovers();
+    resetGame();
+  });
+
   function goToStart(mode) {
     const s = SCENIC_STARTS[mode];
     if (!s) return;
@@ -690,10 +750,29 @@ async function initApp() {
     if (!choice) return;
     if (choice.tooFast) { showNotice('Slow down to get out'); return; }
     const car = cm.entities.car;
-    if (choice.parked || choice.moving) {
-      // the car the player had is left parked where it is
-      const drop = { ...cm.carLook, x: car.position.x, z: car.position.z, yaw: car.heading,
+    let drop = null;
+    if (choice.parked || choice.moving || choice.machine) {
+      // the car the player had is left parked where it is (a machine from the road work, back on the ground there)
+      drop = { ...cm.carLook, x: car.position.x, z: car.position.z, yaw: car.heading,
         y: Math.max(0, car.position.y - cm.getGroundHeight(car.position.x, car.position.z, 'car')) };
+      if (car.machine) { roadWork.leave(drop.x, drop.z, drop.yaw); cm._colliderCells = null; drop = null; }
+      if (choice.machine) {
+        if (drop) { const done = parkedCars.take(null, drop); if (done?.collider) allColliders.push(done.collider); }
+        const m = choice.machine;
+        const look = roadWork.take(m.machine);
+        cm._colliderCells = null;
+        cm.restyleCar(look);
+        cm.stopCar(car);
+        car.position.set(m.x, cm.getGroundHeight(m.x, m.z, 'car'), m.z);
+        car.heading = m.yaw;
+        car.prevX = car.position.x;
+        car.prevZ = car.position.z;
+        car.mesh.position.copy(car.position);
+        car.mesh.rotation.y = car.heading;
+        log(`[car] climbed into ${look.kind === 'dumptruck' ? 'a dump truck' : 'an excavator'} at the road work`);
+      }
+    }
+    if (choice.parked || choice.moving) {
       const taken = choice.moving ? trafficSystem.takeCar(cm.entities.person.position.x, cm.entities.person.position.z, 5) : null;
       if (choice.moving && !taken) { cm.entities.person.riding = null; return; }
       const done = parkedCars.take(choice.parked || null, drop);
@@ -1207,6 +1286,11 @@ async function initApp() {
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.lookId === 'midnight');
     mark('light, map, weather, sound');
     if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
+    if (TIER.stream) {
+      const { x, z } = cameraSystem.camera.position;
+      updateGroundStreaming(x, z);
+      houseStream?.update(x, z);
+    }
     // Traffic collisions can move the player after controller updates; finalize moving hierarchies here.
     for (const root of dynamicRoots) root.updateMatrixWorld();
     mark('culling');
@@ -1325,7 +1409,11 @@ async function initApp() {
   }
 
   // sharp: drawing smaller never made frames faster here (the log showed it undone every time), it only blurred the city
-  game({ renderer, init() { const was = pendingRestore(); if (was) startFrom(was); }, frame, touch: false, keyboard: false, snapshot, sharp: true,
+  game({ renderer, init() {
+    // a phone draws fewer pixels, and smaller still if frames come slow
+    if (TIER.scale < 1) renderer.setSize(Math.round(1920 * TIER.scale), Math.round(1080 * TIER.scale), false);
+    const was = pendingRestore(); if (was) startFrom(was);
+  }, frame, touch: false, keyboard: false, snapshot, sharp: TIER.name !== 'phone',
     // What this run made that no part keeps goes with it: the map and the camera system are made afresh by the next.
     dispose() { cameraSystem.release(); mapSystem.release(); renderPipeline.dispose(); colorGrade.dispose(); ssrPass?.dispose(); scenePass.dispose(); } });
   container.appendChild(renderer.domElement);

@@ -696,17 +696,25 @@ function coveredBy(S, O) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-function buildHouses(records, addresses = null) {
-  // the city's address points in 20 m cells
-  const ADDR_CELL = 20;
+// the city's address points in 20 m cells, made once for all the houses built from them (streamHouses builds a few
+// streets' worth at a time)
+const ADDR_CELL = 20;
+const addressGrids = new WeakMap();
+function addressGrid(addresses) {
+  if (!addresses) return new Map();
+  if (addressGrids.has(addresses)) return addressGrids.get(addresses);
   const addrGrid = new Map();
-  if (addresses) {
-    for (let i = 0; i < addresses.length; i += 3) {
-      const key = Math.floor(addresses[i] / ADDR_CELL) * 100000 + Math.floor(addresses[i + 1] / ADDR_CELL);
-      if (!addrGrid.has(key)) addrGrid.set(key, []);
-      addrGrid.get(key).push(i);
-    }
+  for (let i = 0; i < addresses.length; i += 3) {
+    const key = Math.floor(addresses[i] / ADDR_CELL) * 100000 + Math.floor(addresses[i + 1] / ADDR_CELL);
+    if (!addrGrid.has(key)) addrGrid.set(key, []);
+    addrGrid.get(key).push(i);
   }
+  addressGrids.set(addresses, addrGrid);
+  return addrGrid;
+}
+
+function buildHouses(records, addresses = null, { quiet = false } = {}) {
+  const addrGrid = addressGrid(addresses);
   // the house's number: an address point inside its footprint, else the nearest within a few metres of it
   const numberFor = (ring, cx, cz, reach) => {
     let best = -1, bestD = reach * reach, inBest = -1, inD = Infinity;
@@ -1208,9 +1216,63 @@ function buildHouses(records, addresses = null) {
     mesh.userData.cullDistance = 160;
     group.add(mesh);
   }
-  console.info(`[houses] ${houses} houses, ${wings} wings, ${dormers} dormers, ${porches} porches, ${tagged} mapped roofs, ` +
+  if (!quiet) console.info(`[houses] ${houses} houses, ${wings} wings, ${dormers} dormers, ${porches} porches, ${tagged} mapped roofs, ` +
     `${rails.length / 8} railings, ${shrubs.length / 7} shrubs, ${plates.length / 6} house numbers`);
   return group;
 }
 
-export { buildHouses };
+// The houses built only near the player (a phone, or a Mac without much memory: device-tier.js), in STREAM_CELL
+// squares: those within `radius` of (x, z) now, the rest a square a frame as the player comes near (update, each
+// frame), and those left 300 m beyond it let go. Every house's collider stays, built or not. The porch details in a
+// square are hidden beyond their own distances (`cullDistance`, scaled by `farCut`), as the scene's culling would.
+const STREAM_CELL = 250;
+function streamHouses(records, addresses, { radius, x, z, farCut = 1 }) {
+  const cells = new Map();
+  for (const r of records) {
+    const key = Math.floor(r.cx / STREAM_CELL) * 100000 + Math.floor(r.cz / STREAM_CELL);
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(r);
+  }
+  const group = new THREE.Group();
+  group.name = 'AnnArborHouses';
+  const built = new Map();
+  const distance = (key, px, pz) => {
+    const cx = Math.round(key / 100000), cz = key - cx * 100000;
+    const dx = Math.max(cx * STREAM_CELL - px, 0, px - (cx + 1) * STREAM_CELL);
+    const dz = Math.max(cz * STREAM_CELL - pz, 0, pz - (cz + 1) * STREAM_CELL);
+    return Math.hypot(dx, dz);
+  };
+  const build = (key) => {
+    const made = buildHouses(cells.get(key), addresses, { quiet: true });
+    for (const m of made.children) {
+      // ground that comes and goes casts its own shadow, not a stand-in's that would stay (scene-culling.js)
+      delete m.userData.shadowStandIn;
+      m.userData.streamed = true;
+    }
+    group.add(made);
+    made.updateMatrixWorld(true);
+    built.set(key, made);
+  };
+  const near = (px, pz) => [...cells.keys()].filter((k) => !built.has(k) && distance(k, px, pz) < radius)
+    .sort((a, b) => distance(a, px, pz) - distance(b, px, pz));
+  for (const k of near(x, z)) build(k);
+  const update = (px, pz) => {
+    for (const [k, made] of built) {
+      const d = distance(k, px, pz);
+      if (d > radius + 300) {
+        made.removeFromParent();
+        made.traverse((o) => o.geometry?.dispose());
+        built.delete(k);
+        continue;
+      }
+      for (const m of made.children) if (m.userData.cullDistance) m.visible = d < m.userData.cullDistance * farCut;
+    }
+    const next = near(px, pz)[0];
+    if (next !== undefined) build(next);
+  };
+  group.userData.stream = { update, built };
+  console.info(`[houses] ${records.length} houses in ${cells.size} squares, ${built.size} built near the start`);
+  return group;
+}
+
+export { buildHouses, streamHouses };

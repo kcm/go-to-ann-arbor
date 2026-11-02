@@ -35,7 +35,9 @@ import {
 import { GEO } from './city-geodata.js';
 import { REAL_BUILDINGS } from './building-geodata.js';
 import { createBuildingFootprints } from './building-footprints.js';
-import { buildHouses } from './houses.js';
+import { buildHouses, streamHouses } from './houses.js';
+import { TIER } from './device-tier.js';
+import { groundStreamCenter } from './terrain.js';
 import { buildChurches, churchPlan } from './churches.js';
 import { log } from '../lamp-game.js';
 import { buildGasStations, canopyFootprints, insideCanopy } from './gas-stations.js';
@@ -561,7 +563,12 @@ function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasSta
     });
   }
   if (roofItems.length) group.add(createHouseRoofs(roofItems));
-  if (houseRecords.length) group.add(buildHouses(houseRecords, addresses));
+  // Lamp: on a phone, or a Mac without much memory (device-tier.js), only the houses near the player are built
+  if (houseRecords.length) {
+    group.add(TIER.stream
+      ? streamHouses(houseRecords, addresses, { radius: TIER.stream * (TIER.farCut < 1 ? 0.8 : 1), ...groundStreamCenter(), farCut: TIER.farCut })
+      : buildHouses(houseRecords, addresses));
+  }
   if (churches.length) { group.add(buildChurches(churches)); log(`[churches] ${churches.length}`); }
   if (canopies.length || (gasStations && gasStations.canopies)) {
     const gas = buildGasStations(gasStations);

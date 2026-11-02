@@ -7,7 +7,7 @@
       "url" : "https://github.com/lampdotdev/newyork"
     },
     {
-      "commit" : "3681fb673a5cc54f2710d3d2a7a057b757081dd6",
+      "commit" : "e0692774463d9f0dc0c41d37b7a2609b39589716",
       "name" : "Go To Ann Arbor",
       "url" : "https://github.com/mrubens/go-to-ann-arbor",
       "wish" : "3DF4E397-D414-4837-8390-3F7946A6D12D"
@@ -45,6 +45,18 @@
       "license" : "LicenseRef-NY-Open-Data",
       "name" : "MTA Subway Entrances and Exits",
       "url" : "https://data.ny.gov/Transportation/MTA-Subway-Entrances-and-Exits-2024/i9wp-a4ja"
+    },
+    {
+      "adapted" : false,
+      "author" : "ambientCG (Lennart Demes)",
+      "files" : [
+        "Web/assets/ambientcg/Ground054_1K-JPG_Color.jpg",
+        "Web/assets/ambientcg/Ground054_1K-JPG_NormalGL.jpg",
+        "Web/assets/ambientcg/Ground054_1K-JPG_Roughness.jpg"
+      ],
+      "license" : "CC0-1.0",
+      "name" : "ambientCG materials",
+      "url" : "https://ambientcg.com"
     },
     {
       "author" : "City of Ann Arbor",
