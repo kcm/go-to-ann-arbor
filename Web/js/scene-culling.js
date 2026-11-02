@@ -18,7 +18,7 @@ const SHADOW_PROXY_LAYER = 3;
 const CULL_PER_METRE = 700;
 // never closer: the shadow cascades reach ~200 m at street level (on a phone, without them, the far props go sooner)
 const CULL_MIN = 220 * TIER.farCut;
-const CULL_MAX = 1400; // beyond this the props are kept at any distance
+const CULL_MAX = 1400; // beyond this the props are kept in static cells with far horizon culling
 const PROXY_CELL = 500; // the far cascade spans ~400 m at street level: a cascade sees a few cells
 const STATIC_CELL = 600;
 const STATIC_FAR_CULL = 2000 * TIER.farCut;
@@ -186,10 +186,10 @@ function setupSceneCulling(scene, roots, shadow = null) {
         }
         return;
       }
-      if (o.count < 64 || o.count !== o.instanceMatrix.count) return;
-      if (o.count * triangleCount(o.geometry) < 40000) return;
+      if (o.count < 32 || o.count !== o.instanceMatrix.count) return;
+      if (!o.userData.cullDistance && o.count * triangleCount(o.geometry) < 40000) return;
       if (!o.boundingSphere) o.computeBoundingSphere();
-      if (o.boundingSphere.radius < 1500) return;
+      if (o.boundingSphere.radius < 1200) return;
       chunkable.push(o);
     });
   }
@@ -322,6 +322,8 @@ function setupSceneCulling(scene, roots, shadow = null) {
       if (firstProxy.has(kind)) mesh.userData.sharesPipelineWith = firstProxy.get(kind);
       else firstProxy.set(kind, mesh);
       scene.add(mesh);
+      const sphere = mesh.boundingSphere || mesh.geometry.boundingSphere;
+      if (sphere) pushCulled(mesh, sphere, 500);
     };
     for (const entry of instancedBySig.values()) {
       for (const list of entry.cells.values()) {

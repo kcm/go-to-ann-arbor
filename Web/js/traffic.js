@@ -359,10 +359,12 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   const carShadowInst = new THREE.InstancedMesh(unitPlane, contactShadowMat, NUM_CARS);
   carShadowInst.renderOrder = 998;
 
-  for (const m of bodyMeshes) m.castShadow = m.receiveShadow = true;
-  for (const m of policeLightbarMeshes) m.castShadow = true;
-  carWheelLeftInst.castShadow = carWheelLeftInst.receiveShadow = true;
-  carWheelRightInst.castShadow = carWheelRightInst.receiveShadow = true;
+  for (const b of Object.values(bodies)) {
+    b.near.castShadow = b.near.receiveShadow = true;
+    b.far.receiveShadow = true;
+  }
+  carWheelLeftInst.receiveShadow = true;
+  carWheelRightInst.receiveShadow = true;
 
   group.add(
     ...bodyMeshes,
@@ -404,8 +406,8 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   busShadowInst.renderOrder = 998;
 
   busBodyInst.castShadow = busBodyInst.receiveShadow = true;
-  busWheelLeftInst.castShadow = busWheelLeftInst.receiveShadow = true;
-  busWheelRightInst.castShadow = busWheelRightInst.receiveShadow = true;
+  busWheelLeftInst.receiveShadow = true;
+  busWheelRightInst.receiveShadow = true;
 
   const buses = [];
   for (let i = 0; i < NUM_BUSES; i++) {

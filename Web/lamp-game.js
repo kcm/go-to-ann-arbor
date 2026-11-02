@@ -544,7 +544,7 @@ function keysFor(name) {
 }
 
 // What to call a button (BUTTON.A…), a stick (STICK.LEFT) or a trigger (TRIGGER.RT) on the input the player is using
-// (or the one given): "A", "✕", "Space", "W A S D" ("↑ ← ↓ →" with game()'s `keyboardHints`). A key's code ('KeyH'), for a page that reads keys itself, is that
+// (or the one given): "A", "X", "Space", "W A S D" ("↑ ← ↓ →" with game()'s `keyboardHints`). A key's code ('KeyH'), for a page that reads keys itself, is that
 // key's name whatever the input. null when the input has nothing for it (no key for a stick's click, no touch button
 // the game didn't ask for), so the prompt is left out.
 export function label(what, on = current) {
@@ -876,6 +876,8 @@ export async function game({ renderer: given, init, frame, touch: buttons, keybo
         if (mine !== loops) return;
         // Its shaders compiling: the frame before stays on screen, and the game waits for them.
         if (warming && warming !== 'ask') { nextFrame(loop); return; }
+        // Cap at ~60 FPS on 120 Hz ProMotion displays so the GPU isn't pegged rendering twice as many frames.
+        if (last && now - last < 11.5) { nextFrame(loop); return; }
         const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
         // How long the page took to build the game, which Lamp reads to know how long its preview's build may take.
         const first = !last && mine === 1;

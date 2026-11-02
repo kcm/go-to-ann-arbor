@@ -11,7 +11,7 @@ import { localTime } from './theride.js';
 // Street station; an Ann Arbor Railroad freight (two engines, boxcars and hoppers) and a short Great Lakes Central one
 // running back and forth.
 
-const GAUGE = 1.435, TIE_STEP = 0.6, TOP = 0.42; // top of the rails above the ground
+const GAUGE = 1.435, TIE_STEP = 1.2, TOP = 0.42; // top of the rails above the ground
 
 const C = (hex) => new THREE.Color(hex).convertSRGBToLinear();
 function tinted(geo, hex) {
@@ -27,7 +27,7 @@ function tinted(geo, hex) {
 
 // A line of flat x, z pairs resampled every `step` metres, with the height of its rails' base along it: the ground
 // averaged over 30 m either way (a railroad doesn't follow every bump), and a straight run across a bridge
-function railPath(flat, bridge, step = 2) {
+function railPath(flat, bridge, step = 5) {
   const pts = [];
   for (let i = 0; i < flat.length; i += 2) pts.push([flat[i], flat[i + 1]]);
   const out = [];
@@ -262,20 +262,30 @@ function buildRailways(group, crossings = [], wolverine = null) {
     }
     return top;
   };
-  const pos = [], col = [];
+  const trackMat = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide });
+  const TRACK_CELL = 600, trackCells = new Map();
   for (const [a, b, c, d, hex] of quads) {
+    const key = Math.floor(a[0] / TRACK_CELL) * 10000 + Math.floor(a[2] / TRACK_CELL);
+    let cell = trackCells.get(key);
+    if (!cell) trackCells.set(key, (cell = { pos: [], col: [] }));
     const k = C(hex);
-    pos.push(...a, ...b, ...c, ...a, ...c, ...d);
-    for (let i = 0; i < 6; i++) col.push(k.r, k.g, k.b);
+    cell.pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+    for (let i = 0; i < 6; i++) cell.col.push(k.r, k.g, k.b);
   }
-  const trackGeo = new THREE.BufferGeometry();
-  trackGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  trackGeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  trackGeo.computeVertexNormals();
-  const track = new THREE.Mesh(trackGeo, new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }));
-  track.name = 'RailTrack';
-  track.receiveShadow = true;
-  group.add(track);
+  let firstTrack = null;
+  for (const { pos, col } of trackCells.values()) {
+    const trackGeo = new THREE.BufferGeometry();
+    trackGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    trackGeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    trackGeo.computeVertexNormals();
+    const track = new THREE.Mesh(trackGeo, trackMat);
+    track.name = 'RailTrack';
+    track.receiveShadow = true;
+    track.userData.cullDistance = 900;
+    if (firstTrack) track.userData.sharesPipelineWith = firstTrack;
+    else firstTrack = track;
+    group.add(track);
+  }
   const tieGeo = new THREE.BoxGeometry(2.6, 0.16, 0.24).translate(0, 0.1, 0);
   const tieMesh = new THREE.InstancedMesh(tieGeo, new THREE.MeshStandardNodeMaterial({ color: 0x4a3b2e, roughness: 0.95 }), ties.length / 4);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1), v = new THREE.Vector3();
@@ -285,6 +295,7 @@ function buildRailways(group, crossings = [], wolverine = null) {
   }
   tieMesh.name = 'RailTies';
   tieMesh.receiveShadow = true;
+  tieMesh.userData.cullDistance = 350;
   group.add(tieMesh);
 
   // The trains, one on each long line

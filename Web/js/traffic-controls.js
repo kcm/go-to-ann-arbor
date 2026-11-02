@@ -204,16 +204,16 @@ function buildTrafficControls(group, network) {
   const plaqueShape = (ctx) => { ctx.beginPath(); ctx.rect(0, 64, 256, 128); };
   const kinds = {
     pole: [new THREE.CylinderGeometry(1, 1, 1, 10), metal, true],
-    arm: [new THREE.CylinderGeometry(1, 1, 1, 8).rotateX(Math.PI / 2), metal, true],
-    head: [headGeo, housing, true],
+    arm: [new THREE.CylinderGeometry(1, 1, 1, 8).rotateX(Math.PI / 2), metal, false],
+    head: [headGeo, housing, false],
     ...Object.fromEntries(LAMPS.flatMap((lamp, i) => [
       [lamp + 'A', [lampGeo[i], lampMaterial(lamp), false]],
       [lamp + 'B', [lampGeo[i], lampMaterial(lamp), false]]
     ])),
-    post: [new THREE.CylinderGeometry(1, 1, 1, 6), metal, true],
-    stop: [plane, face(stopFace), true],
+    post: [new THREE.CylinderGeometry(1, 1, 1, 6), metal, false],
+    stop: [plane, face(stopFace), false],
     stopBack: [back, backOf((ctx) => octagon(ctx, 126)), false],
-    yield: [plane, face(yieldFace), true],
+    yield: [plane, face(yieldFace), false],
     yieldBack: [back, backOf((ctx) => triangle(ctx, 140)), false],
     plaque: [plane, face(plaqueFace), false],
     plaqueBack: [back, backOf(plaqueShape), false]
@@ -226,6 +226,7 @@ function buildTrafficControls(group, network) {
     matrices.forEach((m, i) => inst.setMatrixAt(i, m));
     inst.instanceMatrix.needsUpdate = true;
     inst.castShadow = shadow;
+    inst.userData.cullDistance = name === 'pole' || name === 'arm' || name === 'head' || name.endsWith('A') || name.endsWith('B') ? 550 : 320;
     inst.name = 'TrafficControls_' + name;
     group.add(inst);
   }

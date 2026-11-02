@@ -37,6 +37,7 @@ function meshOf(pos, material, name, colors = null) {
   const m = new THREE.Mesh(g, material);
   m.name = name;
   m.receiveShadow = true;
+  m.userData.cullDistance = 1500;
   return m;
 }
 
@@ -62,7 +63,7 @@ function buildRiver(group, geos, waterMat) {
       const l = longest(a, b, k);
       if (l > 1600) return true;
       if (l > 9 && byCascades(a, b, k)) return true; // following the ground there, every 3 m
-      if (l <= 30) return false;
+      if (l <= 144) return false;
       const m = [(a[0] + b[0] + k[0]) / 3, 0, (a[2] + b[2] + k[2]) / 3];
       return sloped(a) || sloped(b) || sloped(k) || sloped(m);
     });
@@ -105,7 +106,7 @@ function buildRiver(group, geos, waterMat) {
   if (bankPos.length) {
     // in tiles, so only what's in view is drawn
     const bankMat = new THREE.MeshStandardNodeMaterial({ vertexColors: true, roughness: 0.97 });
-    const TILE = 300, tiles = new Map();
+    const TILE = 700, tiles = new Map();
     for (let i = 0; i < bankPos.length; i += 9) {
       const key = Math.floor((bankPos[i] + bankPos[i + 3] + bankPos[i + 6]) / 3 / TILE) * 1000
         + Math.floor((bankPos[i + 2] + bankPos[i + 5] + bankPos[i + 8]) / 3 / TILE);
@@ -117,7 +118,7 @@ function buildRiver(group, geos, waterMat) {
   }
   if (waterPos.length) {
     // in tiles, so only what's in view is drawn
-    const TILE = 400, tiles = new Map();
+    const TILE = 700, tiles = new Map();
     for (let i = 0; i < waterPos.length; i += 9) {
       const key = Math.floor((waterPos[i] + waterPos[i + 3] + waterPos[i + 6]) / 3 / TILE) * 1000
         + Math.floor((waterPos[i + 2] + waterPos[i + 5] + waterPos[i + 8]) / 3 / TILE);

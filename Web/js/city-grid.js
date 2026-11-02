@@ -1650,7 +1650,7 @@ function buildCityGrid(scene) {
       group.add(m);
     }
   };
-  mergeInto(curbGeos, curbMat, true);
+  mergeInto(curbGeos, curbMat, false);
   mergeInto(slabGeos, sidewalkMat);
   mergeInto(hedgeGeos, medianHedgeMat, true);
 
@@ -1659,7 +1659,7 @@ function buildCityGrid(scene) {
   const curbInstanced = new THREE.InstancedMesh(unitBox, curbMat, rectSlabs.length);
   swInstanced.receiveShadow = true;
   curbInstanced.receiveShadow = true;
-  curbInstanced.castShadow = true;
+  curbInstanced.castShadow = false;
   // One slab per block, too big to stand level on a hill: setOnTerrain makes them follow the ground
   swInstanced.userData.terrain = 'drape';
   curbInstanced.userData.terrain = 'drape';

@@ -872,7 +872,7 @@ async function initApp() {
     const btn = document.getElementById('time-now');
     if (!btn) return;
     const { rise, set } = sunTimes(Date.now());
-    const at = (t) => (t ? new Date(t).toLocaleTimeString('en-US', { timeZone: 'America/Detroit', hour: 'numeric', minute: '2-digit' }) : '—');
+    const at = (t) => (t ? new Date(t).toLocaleTimeString('en-US', { timeZone: 'America/Detroit', hour: 'numeric', minute: '2-digit' }) : '-');
     btn.title = `Now in Ann Arbor · sunrise ${at(rise)}, sunset ${at(set)}`;
     const label = btn.querySelector('.seg-label');
     const w = lightingSystem.weather;

@@ -17,8 +17,8 @@ import { TIER } from './device-tier.js';
 // where they stood.
 
 const STALL_W = 2.7, MODULE = 18;
-const NEAR = 70, FAR = 650;
-const CELL = 250, STREAM_R = 1000, LET_GO = 1300;
+const NEAR = 55, FAR = Math.round(320 * (TIER.farCut || 1));
+const CELL = 250, STREAM_R = 550, LET_GO = 750;
 const LAWN_Y = 0.284; // Lamp: the driveways' height (city-grid.js, LAWN_Y + 0.004)
 
 const MASS = { sedan: 1600, suv: 2100, minivan: 2000, pickup: 2400, van: 2700, sports: 1450 };
@@ -206,29 +206,29 @@ function buildParkedCars(group, nearTrack = null) {
     const spec = BODY_SPECS[kind];
     const mat = createLoftedCarMaterial(spec, null, { parked: true }); // engine off, lamps dark
     const capacity = (streamed ? most[kind] || 0 : cars.length) + SPARE;
-    const make = (geo) => {
+    const make = (geo, shadow = true) => {
       geo.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
       geo.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4));
       const m = new THREE.InstancedMesh(geo, mat, capacity);
       m.count = 0;
       m.frustumCulled = false;
-      m.castShadow = true;
+      m.castShadow = shadow;
       m.receiveShadow = true;
       m.userData.terrain = 'set';
       group.add(m);
       return m;
     };
     return { kind, capacity, cars, left: [],
-      near: make(buildCarGeometry(spec, false)), far: make(buildCarProxyGeometry(spec)) };
+      near: make(buildCarGeometry(spec, false), true), far: make(buildCarProxyGeometry(spec), false) };
   };
   const sets = Object.entries(byKind).map(([kind, cars]) => setFor(kind, cars));
   const wheelMat = createLoftedCarMaterial(BODY_SPECS.sedan, 0xffbe14);
   const wheelMesh = (side) => {
-    const wheels = streamed ? Math.min(1600, spots.length * 2) : spots.length * 2;
+    const wheels = streamed ? Math.min(800, spots.length * 2) : spots.length * 2;
     const m = new THREE.InstancedMesh(buildSteerableWheelGeo(BODY_SPECS.sedan, side), wheelMat, Math.max(1, wheels + SPARE * 4));
     m.count = 0;
     m.frustumCulled = false;
-    m.castShadow = true;
+    m.castShadow = false;
     group.add(m);
     return m;
   };

@@ -960,17 +960,6 @@ function createTreeField(_scene, sites, colliders = [], { stream = 0, at = null 
     l2: [0, 1].map((v) => makeType(geos[s][v][2], `Trees_${sp.name}_v${v}_lod2`))
   }));
 
-  // Lamp: park, wood and yard trees (`likeStreet`) take their heights from the surveyed street trees of their kind,
-  // each picked by its place, so a park's maples grow as the street's maples do
-  const surveyed = SPECIES.map(() => []);
-  for (const t of sites) if (t.height && !t.likeStreet) surveyed[Math.min(SPECIES.length - 1, Math.max(0, t.species || 0))].push(t.height);
-  for (const list of surveyed) list.sort((a, b) => a - b);
-  for (const t of sites) {
-    if (!t.likeStreet || t.height) continue;
-    const list = surveyed[Math.min(SPECIES.length - 1, Math.max(0, t.species || 0))];
-    // the taller half of them: a park's trees grow freer than a street's
-    if (list.length > 20) t.height = list[Math.floor((0.35 + hashPos(t.x, 2.7, t.z) * 0.65) * (list.length - 1))];
-  }
   const dummy = new THREE.Object3D();
   const tint = new THREE.Color();
   // Where site t's tree stands (left in `dummy`): { sp, variant, s, y }, or null where a building is in the way
@@ -981,8 +970,7 @@ function createTreeField(_scene, sites, colliders = [], { stream = 0, at = null 
     const r3 = hashPos(t.x + t.z, 3.3, 0.7);
     const variant = hashPos(t.x, 5.9, t.z) < 0.5 ? 0 : 1;
     // a surveyed tree grows to its real height (t.height, metres) from its kind's height at scale 1
-    // (its real height as given, but for a typo past 45 m, taller than any tree in Michigan)
-    const s = t.height ? Math.min(45, t.height) / heightOf[sp][variant] * (0.97 + r1 * 0.06)
+    const s = t.height ? Math.min(1.7, Math.max(0.18, t.height / heightOf[sp][variant])) * (0.95 + r1 * 0.1)
       : t.scale * (0.9 + r1 * 0.2);
     // Lamp: a site's y is its height above the ground there (terrain.js), unless it's marked as a height in the world
     const y = (t.y || 0) + (t.world ? 0 : groundHeight(t.x, t.z));
@@ -1135,7 +1123,7 @@ function createTreeField(_scene, sites, colliders = [], { stream = 0, at = null 
     mesh.name = m.name;
     mesh.count = 0;
     mesh.visible = false;
-    mesh.castShadow = true;
+    mesh.castShadow = !m.cell.far;
     mesh.receiveShadow = true;
     m.cell.group.add(mesh);
     m.type.meshes.push(mesh);

@@ -573,14 +573,14 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   }
 
   addMatrixArrayInstanced(unitCyl, poleMetalMat, poleMatrices);
-  addMatrixArrayInstanced(unitBox, poleMetalMat, armMatrices);
-  addMatrixArrayInstanced(signalHousingGeo, signalHousingMat, yellowBoxMatrices);
+  addMatrixArrayInstanced(unitBox, poleMetalMat, armMatrices, false);
+  addMatrixArrayInstanced(signalHousingGeo, signalHousingMat, yellowBoxMatrices, false);
   addMatrixArrayInstanced(signalLensGeo, aveSignalLensMat, aveLensMatrices, false);
   addMatrixArrayInstanced(signalLensGeo, streetSignalLensMat, streetLensMatrices, false);
-  addMatrixArrayInstanced(unitBox, streetBladeMat, streetBladeMatrices);
-  addMatrixArrayInstanced(walkHousingGeo, signalHousingMat, walkBoxMatrices);
+  addMatrixArrayInstanced(unitBox, streetBladeMat, streetBladeMatrices, false);
+  addMatrixArrayInstanced(walkHousingGeo, signalHousingMat, walkBoxMatrices, false);
   addMatrixArrayInstanced(walkPanelGeo, walkSignalGlow, walkBoxMatrices, false);
-  addMatrixArrayInstanced(lampHousingGeo, poleMetalMat, lampHeadMatrices);
+  addMatrixArrayInstanced(lampHousingGeo, poleMetalMat, lampHeadMatrices, false);
   addMatrixArrayInstanced(lampLensGeo, lampBulbGlow, lampHeadMatrices, false);
   const pedPosts = addMatrixArrayInstanced(pedLampPostGeo, poleMetalMat, pedPostMatrices);
   // ~28k posts: they cast as 4-sided base + shaft (16 triangles instead of 120; scene-culling.js shadow stand-ins)
@@ -901,7 +901,10 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   for (const k of Object.keys(FURN_SHAPES)) {
     const inst = addMatrixArrayInstanced(FURN_SHAPES[k], furnMat, furnMatrices[k], k === 'shelter');
     if (k === 'hydrant') hydrantMesh = inst;
-    if (inst && k !== 'shelter') inst.receiveShadow = true;
+    if (inst) {
+      inst.userData.cullDistance = k === 'shelter' ? 500 : 280;
+      if (k !== 'shelter') inst.receiveShadow = true;
+    }
   }
 
   // Courts and fields: tennis, basketball, pickleball and volleyball courts and soccer fields, each painted on its

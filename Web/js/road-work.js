@@ -13,8 +13,8 @@ import { roundedBox, roundedRectShape } from './vehicles.js';
 
 const hash = (x, z, k = 0) => { const v = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };
 
-const MAX_CLOSURES = 60;
-const SPACING = 170; // metres between closed blocks, at the least
+const MAX_CLOSURES = 18;
+const SPACING = 350; // metres between closed blocks, at the least
 
 // Which blocks are shut: side streets and collectors (never the main roads TheRide runs on) between junctions with
 // other ways out, long enough to hold a work zone; picked the same every play, more of them toward the middle of town
@@ -63,13 +63,15 @@ function piece(geo, hex, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
   return geo.index ? geo.toNonIndexed() : geo;
 }
 const box = (w, h, d, hex, x, y, z, rx, ry, rz) => piece(new THREE.BoxGeometry(w, h, d), hex, x, y, z, rx, ry, rz);
-const cyl = (rt, rb, h, hex, x, y, z, seg = 14, rx, ry, rz) => piece(new THREE.CylinderGeometry(rt, rb, h, seg), hex, x, y, z, rx, ry, rz);
+const cyl = (rt, rb, h, hex, x, y, z, seg = 8, rx, ry, rz) => piece(new THREE.CylinderGeometry(rt, rb, h, Math.min(8, seg)), hex, x, y, z, rx, ry, rz);
 const merge = (parts) => { const g = mergeGeometries(parts); g.computeBoundingSphere(); return g; };
 // marks a part as earth: the material draws it with the soil's photographed grain, tinted by its colour
 const earthy = (geo) => { geo.getAttribute('soil').array.fill(1); return geo; };
 
 // a heap of dug earth: a lumpy, uneven dome with a ragged foot that sinks into the ground, w × h × d metres
-function moundGeo(seed, w, h, d, rings = 12, sectors = 36) {
+function moundGeo(seed, w, h, d, rings = 5, sectors = 14) {
+  rings = Math.min(5, rings);
+  sectors = Math.min(14, sectors);
   const pos = [], idx = [];
   const wob = (a) => 1 + 0.13 * Math.sin(3 * a + seed) + 0.07 * Math.sin(5 * a + seed * 2.3) + 0.04 * Math.sin(11 * a + seed * 4.1);
   const lump = (x, z) => 0.07 * Math.sin(x * 6.1 + seed) * Math.sin(z * 5.3 - seed) + 0.04 * Math.sin(x * 13.7 + z * 11.9 + seed * 3);
@@ -97,6 +99,7 @@ function moundGeo(seed, w, h, d, rings = 12, sectors = 36) {
 }
 // clods and stones strewn over a mound (the same w, h, d), so it isn't one smooth shape
 function clods(parts, seed, w, h, d, n, hex, stone = 0x77736c) {
+  n = Math.min(6, n);
   for (let i = 0; i < n; i++) {
     const a = hash(seed, i, 1) * Math.PI * 2, t = 0.25 + hash(seed, i, 2) * 0.8;
     const x = Math.cos(a) * t * w / 2, z = Math.sin(a) * t * d / 2;
@@ -161,7 +164,7 @@ function gloss(geo, v) {
   geo.getAttribute('shine').array.fill(v);
   return geo;
 }
-const rbox = (w, h, d, r, hex, x, y, z, rx, ry, rz) => piece(roundedBox(w / 2, h / 2, d, Math.min(r, w / 2 - 0.02, h / 2 - 0.02), Math.min(0.02, r)), hex, x, y, z, rx, ry, rz);
+const rbox = (w, h, d, r, hex, x, y, z, rx, ry, rz) => box(w, h, d, hex, x, y, z, rx, ry, rz);
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _m = new THREE.Matrix4(), _u = new THREE.Vector3();
 // a geometry whose length runs along z, laid from a to b
 function lay(geo, hex, a, b) {
@@ -173,8 +176,8 @@ function lay(geo, hex, a, b) {
   geo.applyMatrix4(_m);
   return piece(geo, hex);
 }
-const beam = (a, b, w, h, hex) => lay(roundedBox(w / 2, h / 2, Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]), Math.min(0.06, w / 2 - 0.01, h / 2 - 0.01)), hex, a, b);
-const rod = (a, b, r, hex, seg = 10) => lay(new THREE.CylinderGeometry(r, r, Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]), seg).rotateX(Math.PI / 2), hex, a, b);
+const beam = (a, b, w, h, hex) => lay(new THREE.BoxGeometry(w, h, Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2])), hex, a, b);
+const rod = (a, b, r, hex, seg = 6) => lay(new THREE.CylinderGeometry(r, r, Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]), Math.min(6, seg)).rotateX(Math.PI / 2), hex, a, b);
 // a hydraulic ram: painted barrel, chrome rod
 function ram(parts, a, b, r, hex) {
   const m = [a[0] + (b[0] - a[0]) * 0.58, a[1] + (b[1] - a[1]) * 0.58, a[2] + (b[2] - a[2]) * 0.58];
@@ -183,43 +186,16 @@ function ram(parts, a, b, r, hex) {
 }
 // a truck tyre on the x axis: tread, rounded shoulders, a steel wheel with its hub and nuts
 function tyreAt(parts, x, y, z, r, w, outward) {
-  const s = Math.min(0.09, w * 0.28);
-  parts.push(cyl(r, r, w - 2 * s, 0x161617, x, y, z, 22, 0, 0, Math.PI / 2));
-  for (const side of [-1, 1]) {
-    const t = new THREE.TorusGeometry(r - s, s, 6, 22);
-    t.rotateY(Math.PI / 2);
-    parts.push(piece(t, 0x1c1c1d, x + side * (w / 2 - s), y, z));
-  }
-  parts.push(cyl(r - s, r - s, w - 0.02, 0x232324, x, y, z, 22, 0, 0, Math.PI / 2));
-  // tread blocks across the face
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * Math.PI * 2;
-    parts.push(box(w - 2 * s, 0.035, 0.08, 0x0f0f10, x, y + Math.cos(a) * (r + 0.008), z + Math.sin(a) * (r + 0.008), a));
-  }
+  parts.push(cyl(r, r, w, 0x161617, x, y, z, 8, 0, 0, Math.PI / 2));
   const face = x + outward * (w / 2);
-  parts.push(gloss(cyl(r * 0.6, r * 0.6, 0.05, 0xb9bcbf, face, y, z, 18, 0, 0, Math.PI / 2), 0.55));
-  parts.push(cyl(r * 0.24, r * 0.3, 0.12, 0x5a5d60, face + outward * 0.04, y, z, 12, 0, 0, Math.PI / 2));
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2;
-    parts.push(gloss(cyl(0.022, 0.022, 0.06, 0xd8dadc, face + outward * 0.04, y + Math.cos(a) * r * 0.4, z + Math.sin(a) * r * 0.4, 6, 0, 0, Math.PI / 2), 0.8));
-  }
+  parts.push(gloss(cyl(r * 0.6, r * 0.6, 0.05, 0xb9bcbf, face, y, z, 8, 0, 0, Math.PI / 2), 0.55));
+  parts.push(cyl(r * 0.24, r * 0.3, 0.12, 0x5a5d60, face + outward * 0.04, y, z, 6, 0, 0, Math.PI / 2));
 }
 // a fender arching over a wheel (axis x), open underneath
 function fender(parts, x, y, z, r, w, hex, from = 0, to = Math.PI) {
-  const g = new THREE.CylinderGeometry(r, r, w, 16, 1, true, from, to - from);
+  const g = new THREE.CylinderGeometry(r, r, w, 8, 1, true, from, to - from);
   g.rotateZ(Math.PI / 2);
   parts.push(piece(g, hex, x, y, z));
-  const g2 = new THREE.CylinderGeometry(r - 0.04, r - 0.04, w, 16, 1, true, from, to - from);
-  g2.rotateZ(Math.PI / 2);
-  g2.scale(1, 1, 1);
-  const inner = piece(g2, 0x111111, x, y, z);
-  // its inside faces inward
-  const idx = inner.attributes.normal.array;
-  for (let i = 0; i < idx.length; i++) idx[i] = -idx[i];
-  const pos = inner.attributes.position.array;
-  for (let i = 0; i < pos.length; i += 9) for (let k = 0; k < 3; k++) { const t = pos[i + 3 + k]; pos[i + 3 + k] = pos[i + 6 + k]; pos[i + 6 + k] = t; }
-  for (let i = 0; i < idx.length; i += 9) for (let k = 0; k < 3; k++) { const t = idx[i + 3 + k]; idx[i + 3 + k] = idx[i + 6 + k]; idx[i + 6 + k] = t; }
-  parts.push(inner);
 }
 
 // a tandem-axle dump truck, the kind Ann Arbor's paving contractors run: a conventional cab behind a long hood,
@@ -322,22 +298,22 @@ function excavatorGeo() {
   // undercarriage
   for (const sx of [-1, 1]) {
     const x = sx * 1.12;
-    const loop = new THREE.ExtrudeGeometry(roundedRectShape(2.2, 0.42, 0.38), { depth: 0.6, bevelEnabled: false, curveSegments: 6 });
+    const loop = new THREE.ExtrudeGeometry(roundedRectShape(2.2, 0.42, 0.38), { depth: 0.6, bevelEnabled: false, curveSegments: 3 });
     loop.translate(0, 0, -0.3);
     loop.rotateY(Math.PI / 2);
     parts.push(piece(loop, 0x1a1a1b, x, 0.43, 0));
-    for (let i = 0; i < 24; i++) {
-      const z = -1.85 + i * 0.16;
-      parts.push(box(0.62, 0.05, 0.07, 0x111112, x, 0.875, z));
-      parts.push(box(0.62, 0.05, 0.07, 0x111112, x, -0.005, z));
+    for (let i = 0; i < 10; i++) {
+      const z = -1.8 + i * 0.4;
+      parts.push(box(0.62, 0.05, 0.09, 0x111112, x, 0.875, z));
+      parts.push(box(0.62, 0.05, 0.09, 0x111112, x, -0.005, z));
     }
     parts.push(box(0.5, 0.42, 3.3, MID, x - sx * 0.04, 0.45, 0));
-    for (const z of [-1.82, 1.82]) parts.push(cyl(0.34, 0.34, 0.08, MID, x + sx * 0.3, 0.43, z, 16, 0, 0, Math.PI / 2));
-    parts.push(cyl(0.18, 0.18, 0.1, DK, x + sx * 0.33, 0.43, -1.82, 8, 0, 0, Math.PI / 2));
-    for (let i = 0; i < 5; i++) parts.push(cyl(0.11, 0.11, 0.08, DK, x + sx * 0.3, 0.17, -1.2 + i * 0.6, 10, 0, 0, Math.PI / 2));
+    for (const z of [-1.82, 1.82]) parts.push(cyl(0.34, 0.34, 0.08, MID, x + sx * 0.3, 0.43, z, 8, 0, 0, Math.PI / 2));
+    parts.push(cyl(0.18, 0.18, 0.1, DK, x + sx * 0.33, 0.43, -1.82, 6, 0, 0, Math.PI / 2));
+    for (let i = 0; i < 4; i++) parts.push(cyl(0.11, 0.11, 0.08, DK, x + sx * 0.3, 0.17, -1.2 + i * 0.8, 6, 0, 0, Math.PI / 2));
   }
   parts.push(box(1.7, 0.4, 2.2, MID, 0, 0.62, 0));
-  parts.push(cyl(0.95, 0.95, 0.22, DK, 0, 0.95, 0, 24));
+  parts.push(cyl(0.95, 0.95, 0.22, DK, 0, 0.95, 0, 10));
   // the house: deck, counterweight, engine hood with vents, handrails, exhaust
   parts.push(rbox(2.6, 0.75, 3.1, 0.12, Y, 0, 1.45, -0.3));
   parts.push(rbox(2.6, 0.9, 0.9, 0.4, Y2, 0, 1.6, -2.15));
@@ -357,7 +333,7 @@ function excavatorGeo() {
   parts.push(box(0.98, 0.06, 0.06, DK, cx, 2.0, cz + 0.74));
   parts.push(rbox(1.08, 0.12, 1.6, 0.05, Y, cx, 3.42, cz));
   parts.push(box(0.03, 0.55, 0.03, 0x111111, cx + 0.15, 2.7, cz + 0.77, 0, 0, 0.5));
-  parts.push(cyl(0.08, 0.1, 0.14, 0xff8a00, cx + 0.3, 3.55, cz - 0.5, 10));
+  parts.push(cyl(0.08, 0.1, 0.14, 0xff8a00, cx + 0.3, 3.55, cz - 0.5, 8));
   // boom (bent, in two lengths), stick, bucket, their rams
   const bx = 0.3, piv = [bx, 1.85, 1.05], knee = [bx, 4.25, 2.95], tip = [bx, 3.95, 5.05];
   parts.push(box(0.55, 0.5, 0.5, Y2, bx, 1.75, 1.05));
@@ -365,13 +341,13 @@ function excavatorGeo() {
   for (const sx of [-1, 1]) {
     const o = (p) => [p[0] + sx * 0.31, p[1], p[2]];
     parts.push(beam(o(piv), o(knee), 0.03, 0.5, Y2), beam(o(knee), o(tip), 0.03, 0.44, Y2));
-    parts.push(cyl(0.16, 0.16, 0.06, DK, bx + sx * 0.33, knee[1], knee[2], 12, 0, 0, Math.PI / 2));
+    parts.push(cyl(0.16, 0.16, 0.06, DK, bx + sx * 0.33, knee[1], knee[2], 8, 0, 0, Math.PI / 2));
   }
   // the hydraulic hoses that run up the boom and down to the bucket, in black rubber
   for (const hx of [-0.1, 0.1]) {
     const o = (p, dy, dz = 0) => [p[0] + hx, p[1] + dy, p[2] + dz];
-    parts.push(rod(o(piv, 0.36, -0.2), o(knee, 0.36), 0.03, 0x141414, 8), rod(o(knee, 0.36), o(tip, 0.32), 0.03, 0x141414, 8));
-    parts.push(rod(o(tip, 0.32), o(tip, 0.5, 0.35), 0.03, 0x141414, 8));
+    parts.push(rod(o(piv, 0.36, -0.2), o(knee, 0.36), 0.03, 0x141414, 6), rod(o(knee, 0.36), o(tip, 0.32), 0.03, 0x141414, 6));
+    parts.push(rod(o(tip, 0.32), o(tip, 0.5, 0.35), 0.03, 0x141414, 6));
   }
   // black-and-yellow warning stripes on the counterweight's back
   for (let i = 0; i < 7; i++) parts.push(box(0.16, 0.62, 0.03, 0x1a1a1a, -1.05 + i * 0.35, 1.58, -2.61, 0, 0, 0.6));
@@ -385,18 +361,18 @@ function excavatorGeo() {
   parts.push(beam([bx, 1.75, 6.15], [bx, 1.2, 6.2], 0.3, 0.1, DK));
   const bk = [bx, 0.75, 6.05], br = 0.58;
   {
-    const shell = new THREE.CylinderGeometry(br, br, 0.95, 14, 1, true, -Math.PI * 0.82, Math.PI * 1.32);
+    const shell = new THREE.CylinderGeometry(br, br, 0.95, 8, 1, true, -Math.PI * 0.82, Math.PI * 1.32);
     shell.rotateZ(Math.PI / 2);
     parts.push(piece(shell, MID, bk[0], bk[1], bk[2]));
     for (const sx of [-1, 1]) {
-      const side = new THREE.CylinderGeometry(br, br, 0.04, 14, 1, false, -Math.PI * 0.82, Math.PI * 1.32);
+      const side = new THREE.CylinderGeometry(br, br, 0.04, 8, 1, false, -Math.PI * 0.82, Math.PI * 1.32);
       side.rotateZ(Math.PI / 2);
       parts.push(piece(side, Y2, bk[0] + sx * 0.475, bk[1], bk[2]));
     }
     const la = -Math.PI * 0.82, ly = bk[1] + Math.sin(la) * br, lz = bk[2] + Math.cos(la) * br;
     for (let i = 0; i < 5; i++) parts.push(box(0.08, 0.07, 0.22, 0x9a9da0, bx - 0.36 + i * 0.18, ly - 0.03, lz - 0.08, 0.5));
     // a scoop of dirt in it
-    parts.push(earthy(piece(moundGeo(8.3, 0.88, 0.24, 0.76, 6, 20), 0x4e3c2b, bk[0], bk[1] - 0.05, bk[2])));
+    parts.push(earthy(piece(moundGeo(8.3, 0.88, 0.24, 0.76, 4, 10), 0x4e3c2b, bk[0], bk[1] - 0.05, bk[2])));
   }
   return merge(parts);
 }
@@ -404,14 +380,14 @@ function excavatorGeo() {
 function pileGeo() {
   const parts = [earthy(piece(moundGeo(1.7, 4.4, 1.15, 3.5), 0x5e4632))];
   // a second, smaller heap slumped against it, and the clods and stones on both
-  parts.push(earthy(piece(moundGeo(4.2, 2.2, 0.55, 1.9, 8, 28), 0x56402d, 1.5, 0, 0.9)));
-  clods(parts, 3.3, 4.2, 1.1, 3.3, 34, 0x4f3b29);
+  parts.push(earthy(piece(moundGeo(4.2, 2.2, 0.55, 1.9, 4, 12), 0x56402d, 1.5, 0, 0.9)));
+  clods(parts, 3.3, 4.2, 1.1, 3.3, 6, 0x4f3b29);
   return merge(parts);
 }
 // the dug-up patch (a unit square, scaled to the dig): loose backfill heaped a little above the cut asphalt, its edge
 // ragged where the pavement broke off
 function patchGeo() {
-  const n = 20, pos = [], idx = [];
+  const n = 8, pos = [], idx = [];
   for (let i = 0; i <= n; i++) for (let j = 0; j <= n; j++) {
     let x = i / n - 0.5, z = j / n - 0.5;
     const edge = i === 0 || j === 0 || i === n || j === n;
@@ -636,17 +612,17 @@ function buildRoadWork(group, closures) {
   const machineMesh = { dumptruck: setFixed(dumpTruckGeo(), fixed.truck), excavator: setFixed(excavatorGeo(), fixed.excavator) };
   fixed.truck.forEach((m, i) => { m.i = i; });
   fixed.excavator.forEach((m, i) => { m.i = i; });
-  setFixed(pileGeo(), fixed.pile);
+  setFixed(pileGeo(), fixed.pile, false, false);
   setFixed(patchGeo(), fixed.patch, true, false);
   setFixed(plateGeo(), fixed.plate, true, false);
 
   // the diamonds on their stands
-  const standMesh = instanced(standGeo(), mat, aheads.length);
+  const standMesh = instanced(standGeo(), mat, aheads.length, false);
   const diamondMat = new THREE.MeshStandardNodeMaterial({ map: aheadTexture(), roughness: 0.5 });
   const diamond = new THREE.BoxGeometry(0.9, 0.9, 0.025);
   diamond.rotateZ(Math.PI / 4);
   diamond.translate(0, 1.55, 0.04);
-  const diamondMesh = instanced(diamond, diamondMat, aheads.length);
+  const diamondMesh = instanced(diamond, diamondMat, aheads.length, false);
   aheads.forEach((a, i) => {
     const y = groundHeight(a.x, a.z);
     place(standMesh, i, a.x, y, a.z, a.yaw);
@@ -657,14 +633,14 @@ function buildRoadWork(group, closures) {
   const byKind = { cone: [], drum: [], barricade: [] };
   for (const it of items) { it.i = byKind[it.kind].length; byKind[it.kind].push(it); }
   const looseMesh = {
-    cone: instanced(coneGeo(), mat, byKind.cone.length),
-    drum: instanced(drumGeo(), mat, byKind.drum.length),
-    barricade: instanced(barricadeGeo(), mat, byKind.barricade.length)
+    cone: instanced(coneGeo(), mat, byKind.cone.length, false),
+    drum: instanced(drumGeo(), mat, byKind.drum.length, false),
+    barricade: instanced(barricadeGeo(), mat, byKind.barricade.length, false)
   };
   const plateMat = new THREE.MeshStandardNodeMaterial({ map: closedTexture(), roughness: 0.5 });
   const plate = new THREE.BoxGeometry(1.2, 0.6, 0.025);
   plate.translate(0, 1.9, 0.07);
-  const plateMesh = instanced(plate, plateMat, byKind.barricade.length);
+  const plateMesh = instanced(plate, plateMat, byKind.barricade.length, false);
 
   // the amber lamps, blinking out of step with each other
   const lampMat = new THREE.MeshStandardNodeMaterial({ color: 0x5a3a08, roughness: 0.4 });
