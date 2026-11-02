@@ -1,3 +1,4 @@
+import { gpuOnly } from './gpu-only.js';
 import * as THREE from 'three/webgpu';
 import { Fn, attribute, float, vec2, vec3, color, fract, floor, abs, clamp, max, min, mix, step, smoothstep, sin, fwidth, uv, texture, pow, mod } from 'three/tsl';
 import { cityUniforms } from './tsl-materials.js';
@@ -1249,6 +1250,7 @@ function streamHouses(records, addresses, { radius, x, z, farCut = 1 }) {
       delete m.userData.shadowStandIn;
       m.userData.streamed = true;
     }
+    gpuOnly(made);
     group.add(made);
     made.updateMatrixWorld(true);
     built.set(key, made);

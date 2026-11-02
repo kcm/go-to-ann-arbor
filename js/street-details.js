@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { Fn, float, color, positionWorld, uniform, mod, fract, step, smoothstep, mix } from 'three/tsl';
-import { groundHeight, groundHeightNode } from './terrain.js';
+import { groundHeight, groundHeightNode, groundStreamCenter } from './terrain.js';
+import { TIER } from './device-tier.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   AVENUES,
@@ -1159,7 +1160,8 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   let sidewalkTreePositions = placeStreetTrees(REAL_TREES, treePositions,
     (x, z) => !inPlaza(x, z, 1.5) && isClearOfPoles(x, z, 2.2), REAL_TREE_KINDS, REAL_TREE_HEIGHTS);
   for (const tree of sidewalkTreePositions) treePositions.push(tree);
-  const treeField = createTreeField(scene, treePositions, colliders);
+  const treeField = createTreeField(scene, treePositions, colliders,
+    { stream: TIER.stream, at: TIER.stream ? groundStreamCenter() : null });
   group.add(treeField.group);
   sidewalkTreePositions = sidewalkTreePositions.filter((t) => treeField.sites.has(t));
   console.info(`[streetDetails] ${treeField.stats.trees} trees (${sidewalkTreePositions.length} street trees)`);
@@ -1368,10 +1370,8 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   const obstacles = [];
   // Lamp: each can be knocked over by a hard enough hit (knockdowns.js): a tree by its trunk and height, a pole with
   // every piece of it (its instances in each mesh drawn from the lists own() noted)
-  for (const t of treeField.sites) {
-    const size = treeField.info(t);
-    obstacles.push({ x: t.x, z: t.z, r: 0.22, kind: 'tree', trunk: size.r, height: size.h, pose: (turn) => treeField.pose(t, turn) });
-  }
+  // (streamed, the field hands its planted trunks to main.js as they come and go)
+  if (!TIER.stream) obstacles.push(...treeField.obstacles());
   // A streetlight knocked over goes dark: its lamp (the head out on its arm, or the globe on top) and the pool under it
   const pm0 = new THREE.Matrix4().makeScale(0, 0, 0);
   function lightsOut(p) {

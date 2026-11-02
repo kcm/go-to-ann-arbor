@@ -3,6 +3,7 @@ import * as THREE from 'three/webgpu';
 import { createTreeMaterial } from './tsl-materials.js';
 import { groundHeight } from './terrain.js';
 import { polygonBoxOverlaps } from './building-collision.js';
+import { dropBuffers } from './gpu-only.js';
 
 // Seeded street and park trees with three geometry levels, regrouped by spatial cell as the camera moves.
 // Bark tubes and leaf cards share a material; atlas mipmaps preserve leaf coverage at a distance.
@@ -918,8 +919,11 @@ function createTreeClearance(colliders) {
  * Builds the instanced tree field for `sites` ({ x, y, z, scale, species, yaw?, sx?, sz?, tier? }). Call
  * `update(cameraPosition)` from the frame loop to keep each tree's level of detail up to date. Returns
  * { group, material, atlas, sites (accepted placements), update(cameraPosition) }.
+ * Lamp: streamed (`stream`, metres: a phone, a Mac with less memory: device-tier.js), only the square kilometres within
+ * that of the camera are planted, as fields of their own, and let go further off; `sites` is then only asked whether a
+ * site was planted, and the trees' trunks come and go with them (`onObstacles(added, removed)`, `obstacles()`).
  */
-function createTreeField(_scene, sites, colliders = []) {
+function createTreeField(_scene, sites, colliders = [], { stream = 0, at = null } = {}) {
   const group = new THREE.Group();
   group.name = 'Trees';
   const atlas = createLeafAtlas();
@@ -938,10 +942,56 @@ function createTreeField(_scene, sites, colliders = []) {
   }));
   const heightOf = treeBounds.map((variants) => variants.map((v) => Math.max(1, v.bounds.max.y)));
   const worldBounds = new THREE.Box3();
-  const plantedSites = new Set();
+  const plantedSites = stream ? new WeakSet() : new Set();
 
+  // Shared geometry types per species, variant and level.
+  const types = [];
+  const makeType = (geo, name) => {
+    const height = Math.max(Math.abs(geo.boundingBox.min.y), Math.abs(geo.boundingBox.max.y));
+    // The material adds wind after the instance transform: height-squared lean/rock, plus bob and flutter.
+    const windPadding = Math.hypot(0.2, 0.06) * Math.hypot(0.86, 0.51) * (height / 11) ** 2 + 2;
+    const type = { geo, name, windPadding, meshes: [] };
+    types.push(type);
+    return type;
+  };
+  const meshIndex = SPECIES.map((sp, s) => ({
+    l0: [0, 1].map((v) => makeType(geos[s][v][0], `Trees_${sp.name}_v${v}_lod0`)),
+    l1: [0, 1].map((v) => makeType(geos[s][v][1], `Trees_${sp.name}_v${v}_lod1`)),
+    l2: [0, 1].map((v) => makeType(geos[s][v][2], `Trees_${sp.name}_v${v}_lod2`))
+  }));
+
+  const dummy = new THREE.Object3D();
+  const tint = new THREE.Color();
+  // Where site t's tree stands (left in `dummy`): { sp, variant, s, y }, or null where a building is in the way
+  function placeOf(t, cleared = false) {
+    const sp = Math.min(SPECIES.length - 1, Math.max(0, t.species || 0));
+    const r1 = hashPos(t.x, 1.3, t.z);
+    const r2 = hashPos(t.z, 7.1, t.x);
+    const r3 = hashPos(t.x + t.z, 3.3, 0.7);
+    const variant = hashPos(t.x, 5.9, t.z) < 0.5 ? 0 : 1;
+    // a surveyed tree grows to its real height (t.height, metres) from its kind's height at scale 1
+    const s = t.height ? Math.min(1.7, Math.max(0.18, t.height / heightOf[sp][variant])) * (0.95 + r1 * 0.1)
+      : t.scale * (0.9 + r1 * 0.2);
+    // Lamp: a site's y is its height above the ground there (terrain.js), unless it's marked as a height in the world
+    const y = (t.y || 0) + (t.world ? 0 : groundHeight(t.x, t.z));
+    dummy.position.set(t.x, y, t.z);
+    dummy.rotation.set(0, t.yaw ?? r2 * Math.PI * 2, 0);
+    dummy.scale.set(s * (0.9 + r3 * 0.2) * (t.sx || 1), s * (0.88 + r1 * 0.24), s * (0.9 + r2 * 0.2) * (t.sz || 1));
+    dummy.updateMatrix();
+    if (!cleared) {
+      const tree = treeBounds[sp][variant];
+      worldBounds.copy(tree.bounds).applyMatrix4(dummy.matrix).expandByScalar(tree.margin);
+      if (!clearOfBuildings(worldBounds)) return null;
+    }
+    return { sp, variant, s, y, r1, r2, r3 };
+  }
+
+  // Plants `list` as one field of its own: its cells, meshes and levels of detail
+  function plant(list, cleared = false) {
+  const group = new THREE.Group();
+  group.name = 'TreeField';
   // Allocate for candidate sites; N counts only trees clear of buildings.
-  const capacity = sites.length;
+  const capacity = list.length;
   let N = 0;
   const mats = new Float32Array(capacity * 16);
   const data = new Float32Array(capacity * 4);
@@ -959,45 +1009,14 @@ function createTreeField(_scene, sites, colliders = []) {
   const treeH = new Float32Array(capacity);
   let standing = null; // the matrices as planted, once one is posed
 
-  // Shared geometry types per species, variant and level.
-  const types = [];
-  const makeType = (geo, name) => {
-    const height = Math.max(Math.abs(geo.boundingBox.min.y), Math.abs(geo.boundingBox.max.y));
-    // The material adds wind after the instance transform: height-squared lean/rock, plus bob and flutter.
-    const windPadding = Math.hypot(0.2, 0.06) * Math.hypot(0.86, 0.51) * (height / 11) ** 2 + 2;
-    const type = { geo, name, windPadding, meshes: [] };
-    types.push(type);
-    return type;
-  };
-  const meshIndex = SPECIES.map((sp, s) => ({
-    l0: [0, 1].map((v) => makeType(geos[s][v][0], `Trees_${sp.name}_v${v}_lod0`)),
-    l1: [0, 1].map((v) => makeType(geos[s][v][1], `Trees_${sp.name}_v${v}_lod1`)),
-    l2: [0, 1].map((v) => makeType(geos[s][v][2], `Trees_${sp.name}_v${v}_lod2`))
-  }));
   const cells = new Map();
   const meshes = [];
   const counts = [];
 
-  const dummy = new THREE.Object3D();
-  const tint = new THREE.Color();
-  sites.forEach((t) => {
-    const sp = Math.min(SPECIES.length - 1, Math.max(0, t.species || 0));
-    const r1 = hashPos(t.x, 1.3, t.z);
-    const r2 = hashPos(t.z, 7.1, t.x);
-    const r3 = hashPos(t.x + t.z, 3.3, 0.7);
-    const variant = hashPos(t.x, 5.9, t.z) < 0.5 ? 0 : 1;
-    // a surveyed tree grows to its real height (t.height, metres) from its kind's height at scale 1
-    const s = t.height ? Math.min(1.7, Math.max(0.18, t.height / heightOf[sp][variant])) * (0.95 + r1 * 0.1)
-      : t.scale * (0.9 + r1 * 0.2);
-    // Lamp: a site's y is its height above the ground there (terrain.js), unless it's marked as a height in the world
-    const y = (t.y || 0) + (t.world ? 0 : groundHeight(t.x, t.z));
-    dummy.position.set(t.x, y, t.z);
-    dummy.rotation.set(0, t.yaw ?? r2 * Math.PI * 2, 0);
-    dummy.scale.set(s * (0.9 + r3 * 0.2) * (t.sx || 1), s * (0.88 + r1 * 0.24), s * (0.9 + r2 * 0.2) * (t.sz || 1));
-    dummy.updateMatrix();
-    const tree = treeBounds[sp][variant];
-    worldBounds.copy(tree.bounds).applyMatrix4(dummy.matrix).expandByScalar(tree.margin);
-    if (!clearOfBuildings(worldBounds)) return;
+  list.forEach((t) => {
+    const at = placeOf(t, cleared);
+    if (!at) return;
+    const { sp, variant, s, y, r1, r2, r3 } = at;
     const i = N++;
     plantedSites.add(t);
     indexOf.set(t, i);
@@ -1290,15 +1309,6 @@ function createTreeField(_scene, sites, colliders = []) {
     return changed;
   }
 
-  // Levels for the start-up view (Midtown, 5th Ave), so the precompile pass sees the tree meshes
-  update(new V3(0, 10, 140));
-
-  // Precompile one visible representative per geometry; the other cells use exactly the same pipeline.
-  for (const type of types) {
-    const representative = type.meshes.find((mesh) => mesh.visible) || type.meshes[0];
-    for (const mesh of type.meshes) if (mesh !== representative) mesh.userData.sharesPipelineWith = representative;
-  }
-
   // Tree placements are world-space instance matrices; the field, cells and meshes keep identity transforms.
   // Freezing both avoids recomputing thousands of dormant objects in every view and shadow pass.
   // Lamp: each tree was stood on the ground as it was planted: setting the street details on the ground leaves it be
@@ -1307,12 +1317,6 @@ function createTreeField(_scene, sites, colliders = []) {
     object.matrixAutoUpdate = false;
     object.matrixWorldAutoUpdate = false;
   });
-
-  const stats = {
-    trees: N,
-    triangles: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.triangles))),
-    cards: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.cards)))
-  };
   // A planted tree's trunk radius and height (m), or null
   function info(site) {
     const i = indexOf.get(site);
@@ -1330,7 +1334,128 @@ function createTreeField(_scene, sites, colliders = []) {
     rebuild();
   }
 
-  return { group, material, atlas, update, meshes: instanced, stats, sites: plantedSites, info, pose };
+  // the meshes' own buffers given back (the trees' shapes are shared, and stay)
+  function dispose() {
+    group.removeFromParent();
+    for (const mesh of instanced) {
+      dropBuffers([mesh.instanceMatrix, mesh.geometry.attributes.aTreeData]);
+      for (const type of types) { const k = type.meshes.indexOf(mesh); if (k >= 0) type.meshes.splice(k, 1); }
+    }
+  }
+  return { group, update, info, pose, instanced, dispose, get N() { return N; }, indexOf, list };
+  }
+
+  // the trunks of a field's trees, solid to the player, each to be knocked over (knockdowns.js)
+  const obstaclesOf = (field) => {
+    const out = [];
+    for (const t of field.list) {
+      const size = field.info(t);
+      if (size) out.push({ x: t.x, z: t.z, r: 0.22, kind: 'tree', trunk: size.r, height: size.h, pose: (turn) => field.pose(t, turn) });
+    }
+    return out;
+  };
+
+  const stats = {
+    trees: 0,
+    triangles: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.triangles))),
+    cards: geos.map((v) => v.map((l) => l.map((g) => g && g.userData.cards)))
+  };
+
+  if (!stream) {
+    const field = plant(sites);
+    for (const t of field.indexOf.keys()) plantedSites.add(t);
+    group.add(field.group);
+    stats.trees = field.N;
+    // Levels for the start-up view (Midtown, 5th Ave), so the precompile pass sees the tree meshes
+    field.update(new V3(0, 10, 140));
+    // Precompile one visible representative per geometry; the other cells use exactly the same pipeline.
+    for (const type of types) {
+      const representative = type.meshes.find((mesh) => mesh.visible) || type.meshes[0];
+      for (const mesh of type.meshes) if (mesh !== representative) mesh.userData.sharesPipelineWith = representative;
+    }
+    group.userData.terrain = 'set';
+    group.matrixAutoUpdate = false;
+    group.matrixWorldAutoUpdate = false;
+    return { group, material, atlas, update: field.update, meshes: field.instanced, stats, sites: plantedSites,
+      info: field.info, pose: field.pose, obstacles: () => obstaclesOf(field) };
+  }
+
+  // Streamed: the sites clear of the buildings, packed by square kilometre (x, y, z, scale, species, yaw, sx, sz, tier,
+  // height, world), planted as the camera comes within `stream` of one and let go 400 m further off
+  const PACK = 11, CHUNK = FAR_CELL_SIZE;
+  const chunkKey = (x, z) => Math.floor(x / CHUNK) * 100000 + Math.floor(z / CHUNK);
+  const lists = new Map();
+  for (const t of sites) {
+    if (!placeOf(t)) continue;
+    plantedSites.add(t);
+    stats.trees++;
+    const k = chunkKey(t.x, t.z);
+    let l = lists.get(k);
+    if (!l) lists.set(k, (l = []));
+    l.push(t.x, t.y ?? 0, t.z, t.scale ?? 1, t.species ?? 0, t.yaw ?? NaN, t.sx ?? 1, t.sz ?? 1, t.tier ?? 0, t.height ?? 0, t.world ? 1 : 0);
+  }
+  const chunks = new Map([...lists].map(([k, l]) => [k, Float32Array.from(l)]));
+  const unpack = (a) => {
+    const out = [];
+    for (let o = 0; o < a.length; o += PACK) {
+      const t = { x: a[o], y: a[o + 1], z: a[o + 2], scale: a[o + 3], species: a[o + 4], sx: a[o + 6], sz: a[o + 7], tier: a[o + 8] };
+      if (!Number.isNaN(a[o + 5])) t.yaw = a[o + 5];
+      if (a[o + 9]) t.height = a[o + 9];
+      if (a[o + 10]) t.world = true;
+      out.push(t);
+    }
+    return out;
+  };
+  const chunkDistance = (k, x, z) => {
+    const cx = Math.floor(k / 100000 + 0.5), cz = k - cx * 100000;
+    return Math.hypot(Math.max(cx * CHUNK - x, 0, x - (cx + 1) * CHUNK), Math.max(cz * CHUNK - z, 0, z - (cz + 1) * CHUNK));
+  };
+  const planted = new Map();
+  let onObstacles = null;
+  const fieldObstacles = new Map();
+  function streamChunks(x, z, all = false) {
+    const added = [], removed = [];
+    for (const [k, field] of planted) {
+      if (chunkDistance(k, x, z) < stream + 400) continue;
+      field.dispose();
+      planted.delete(k);
+      removed.push(...fieldObstacles.get(field));
+      fieldObstacles.delete(field);
+    }
+    // the nearest one not planted yet (all of them within reach as the city's built)
+    const want = [...chunks.keys()].filter((k) => !planted.has(k) && chunkDistance(k, x, z) < stream)
+      .sort((a, b) => chunkDistance(a, x, z) - chunkDistance(b, x, z));
+    for (const k of all ? want : want.slice(0, 1)) {
+      const field = plant(unpack(chunks.get(k)), true);
+      group.add(field.group);
+      planted.set(k, field);
+      const obs = obstaclesOf(field);
+      fieldObstacles.set(field, obs);
+      added.push(...obs);
+    }
+    if (added.length || removed.length) onObstacles?.(added, removed);
+  }
+  const start = at || { x: 0, z: 0 };
+  streamChunks(start.x, start.z, true);
+  for (const field of planted.values()) field.update(new V3(start.x, 10, start.z));
+  group.userData.terrain = 'set';
+  group.matrixAutoUpdate = false;
+  group.matrixWorldAutoUpdate = false;
+  let lastX = start.x, lastZ = start.z;
+  function update(position) {
+    if (Math.hypot(position.x - lastX, position.z - lastZ) > 60) {
+      lastX = position.x; lastZ = position.z;
+      streamChunks(lastX, lastZ);
+    }
+    let changed = false;
+    for (const field of planted.values()) if (field.update(position)) changed = true;
+    return changed;
+  }
+  console.info(`[trees] ${stats.trees} trees in ${chunks.size} square kilometres, ${planted.size} planted near the start`);
+  return { group, material, atlas, update, get meshes() { return [...planted.values()].flatMap((f) => f.instanced); }, stats,
+    sites: plantedSites, info: () => null, pose: () => {},
+    obstacles: () => [...fieldObstacles.values()].flat(),
+    set onObstacles(fn) { onObstacles = fn; } };
 }
 
 export { createTreeField, createLeafAtlas, buildTreeGeometries, SPECIES as TREE_SPECIES };

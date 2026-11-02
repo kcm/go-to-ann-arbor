@@ -8,6 +8,7 @@
 // vertex by vertex, and what stands on it (buildings, trees, lamps, benches) is lifted whole to the lowest ground
 // under it, so nothing leans or floats. What moves asks groundHeight each frame.
 
+import { gpuOnly } from './gpu-only.js';
 import * as THREE from 'three/webgpu';
 import { float, texture, uniform, vec2, positionLocal, positionWorld, cameraPosition, normalize, abs, max, min } from 'three/tsl';
 import { hot, asset, log, work } from '../lamp-game.js';
@@ -964,6 +965,7 @@ async function buildTiles(list) {
     mesh.layers.mask = look.mask;
     mesh.name = layer.group.name;
     mesh.userData.streamed = true;
+    gpuOnly(mesh);
     layer.group.add(mesh);
     mesh.updateMatrixWorld(true);
     layer.built.set(k, mesh);

@@ -5,15 +5,20 @@ import { BODY_SPECS, buildCarGeometry, buildCarProxyGeometry, buildSteerableWhee
 import { groundHeight, groundTilt } from './terrain.js';
 import { curbStalls } from './curb-parking.js';
 import { vehicleContact, resolveVehicleContact } from './vehicle-physics.js';
+import { TIER } from './device-tier.js';
 
 // Parked cars: about two in three stalls of every surface parking lot (in the stalls parking-stripes.js paints: rows
 // off the lot's longest edge, back to back every 18 m), and the curb lanes of the main streets downtown, around campus
 // and in Kerrytown where the street is wide enough beside its traffic lanes. Each is a solid box to the player, a body
 // of its own weight that a car hitting it shoves along and spins (handbrake on, so it slides to a stop: step()), drawn with the traffic's car models, in full near the camera and as the light stand-in further off,
-// re-sorted a few times a second around wherever the camera is.
+// re-sorted a few times a second around wherever the camera is. Streamed (a phone, a Mac with less memory:
+// device-tier.js), only the cars within STREAM_R of the camera are made, in cells filled in and let go as it moves, their
+// boxes handed to the player's colliders then (`onColliders`); the cars the player takes or leaves are remembered by
+// where they stood.
 
 const STALL_W = 2.7, MODULE = 18;
 const NEAR = 70, FAR = 650;
+const CELL = 250, STREAM_R = 1000, LET_GO = 1300;
 const LAWN_Y = 0.284; // Lamp: the driveways' height (city-grid.js, LAWN_Y + 0.004)
 
 const MASS = { sedan: 1600, suv: 2100, minivan: 2000, pickup: 2400, van: 2700, sports: 1450 };
@@ -108,31 +113,10 @@ function buildParkedCars(group, nearTrack = null) {
     const sn = Math.sin(s.yaw), cs = Math.cos(s.yaw);
     return ![0, 2.2, -2.2].some((d) => nearTrack(s.x + sn * d, s.z + cs * d, 3.2));
   });
+  const streamed = TIER.stream > 0;
   const colliders = [];
   const byKind = {};
-  // One parked car: where it stands, how it's tilted on the ground and the box it is to the player
-  const record = (s, kind, hex, style) => {
-    const col = new THREE.Color(hex);
-    const g = groundHeight(s.x, s.z);
-    const [pitch, roll] = groundTilt(s.x, s.z, s.yaw);
-    const car = { x: s.x, z: s.z, yaw: s.yaw, y: s.y || 0, street: s.street, kind, hex, paint: [col.r, col.g, col.b], style, g, pitch, roll };
-    const spec = BODY_SPECS[kind];
-    const hz = (spec.zFront - spec.zRear) / 2, hx = 0.95, mid = (spec.zFront + spec.zRear) / 2;
-    const cs = Math.cos(s.yaw), sn = Math.sin(s.yaw);
-    const cx = s.x + sn * mid, cz = s.z + cs * mid;
-    const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
-    car.collider = { minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, minY: g + car.y, maxY: g + car.y + 1.6,
-      obb: { cx, cz, hx, hz, cs, sn }, parked: car };
-    Object.assign(car, { mid, halfL: hz, halfW: hx, mass: MASS[kind] ?? 1600, vx: 0, vz: 0, w: 0 });
-    colliders.push(car.collider);
-    return car;
-  };
-  for (const s of spots) {
-    const kind = KINDS[Math.floor(hash(s.x, s.z, 4) * KINDS.length)];
-    const look = annArborCar(kind, Math.floor(hash(s.x, s.z, 5) * 1000));
-    (byKind[kind] ||= []).push(record(s, kind, look.hex, look.style));
-  }
-
+  const kindAt = (s) => KINDS[Math.floor(hash(s.x, s.z, 4) * KINDS.length)];
   const euler = new THREE.Euler(), quat = new THREE.Quaternion(), wpos = new THREE.Vector3(), wscale = new THREE.Vector3();
   const matrixOf = (c, m = new THREE.Matrix4()) => m.makeRotationFromEuler(euler.set(-c.pitch, c.yaw, -c.roll, 'YXZ'))
     .setPosition(c.x, c.g + c.y, c.z);
@@ -158,6 +142,62 @@ function buildParkedCars(group, nearTrack = null) {
     }
     return out;
   };
+  // One parked car: where it stands, how it's tilted on the ground and the box it is to the player
+  const record = (s, kind, hex, style) => {
+    const col = new THREE.Color(hex);
+    const g = groundHeight(s.x, s.z);
+    const [pitch, roll] = groundTilt(s.x, s.z, s.yaw);
+    const car = { x: s.x, z: s.z, yaw: s.yaw, y: s.y || 0, street: s.street, kind, hex, paint: [col.r, col.g, col.b], style, g, pitch, roll };
+    const spec = BODY_SPECS[kind];
+    const hz = (spec.zFront - spec.zRear) / 2, hx = 0.95, mid = (spec.zFront + spec.zRear) / 2;
+    const cs = Math.cos(s.yaw), sn = Math.sin(s.yaw);
+    const cx = s.x + sn * mid, cz = s.z + cs * mid;
+    const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
+    car.collider = { minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, minY: g + car.y, maxY: g + car.y + 1.6,
+      obb: { cx, cz, hx, hz, cs, sn }, parked: car };
+    Object.assign(car, { mid, halfL: hz, halfW: hx, mass: MASS[kind] ?? 1600, vx: 0, vz: 0, w: 0 });
+    car.mat = matrixOf(car);
+    car.wheelMats = wheelsOf(car);
+    return car;
+  };
+  const carOf = (s) => {
+    const kind = kindAt(s);
+    const look = annArborCar(kind, Math.floor(hash(s.x, s.z, 5) * 1000));
+    return record(s, kind, look.hex, look.style);
+  };
+  // streamed: the spots by cell, and the most cars of each kind there are ever within reach, for the meshes' room
+  const cellKey = (x, z) => Math.floor(x / CELL) * 100000 + Math.floor(z / CELL);
+  const spotCells = new Map();
+  const most = {};
+  if (streamed) {
+    const counts = new Map();
+    for (const s of spots) {
+      const k = cellKey(s.x, s.z);
+      let list = spotCells.get(k);
+      if (!list) { spotCells.set(k, (list = [])); counts.set(k, {}); }
+      list.push(s);
+      const kind = kindAt(s), c = counts.get(k);
+      c[kind] = (c[kind] || 0) + 1;
+    }
+    const reach = Math.ceil(LET_GO / CELL) + 1;
+    for (const k of counts.keys()) {
+      const cx = Math.floor(k / 100000 + 0.5), cz = k - cx * 100000;
+      const sum = {};
+      for (let ix = -reach; ix <= reach; ix++) for (let iz = -reach; iz <= reach; iz++) {
+        const c = counts.get((cx + ix) * 100000 + cz + iz);
+        if (c) for (const kind in c) sum[kind] = (sum[kind] || 0) + c[kind];
+      }
+      for (const kind in sum) most[kind] = Math.max(most[kind] || 0, sum[kind]);
+    }
+    for (const kind of Object.keys(most)) byKind[kind] = [];
+  } else {
+    for (const s of spots) {
+      const car = carOf(s);
+      colliders.push(car.collider);
+      (byKind[car.kind] ||= []).push(car);
+    }
+  }
+
 
   // per kind: the full model near the camera and the stand-in further off, with room for every car of the kind and a
   // few more (the cars the player leaves where they took another, made for a kind as it's first left)
@@ -165,7 +205,7 @@ function buildParkedCars(group, nearTrack = null) {
   const setFor = (kind, cars = []) => {
     const spec = BODY_SPECS[kind];
     const mat = createLoftedCarMaterial(spec, null, { parked: true }); // engine off, lamps dark
-    const capacity = cars.length + SPARE;
+    const capacity = (streamed ? most[kind] || 0 : cars.length) + SPARE;
     const make = (geo) => {
       geo.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
       geo.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4));
@@ -178,13 +218,14 @@ function buildParkedCars(group, nearTrack = null) {
       group.add(m);
       return m;
     };
-    return { kind, capacity, cars, matrices: cars.map((c) => matrixOf(c)), wheels: cars.map((c) => wheelsOf(c)),
+    return { kind, capacity, cars, left: [],
       near: make(buildCarGeometry(spec, false)), far: make(buildCarProxyGeometry(spec)) };
   };
   const sets = Object.entries(byKind).map(([kind, cars]) => setFor(kind, cars));
   const wheelMat = createLoftedCarMaterial(BODY_SPECS.sedan, 0xffbe14);
   const wheelMesh = (side) => {
-    const m = new THREE.InstancedMesh(buildSteerableWheelGeo(BODY_SPECS.sedan, side), wheelMat, Math.max(1, (spots.length + SPARE * 2) * 2));
+    const wheels = streamed ? Math.min(1600, spots.length * 2) : spots.length * 2;
+    const m = new THREE.InstancedMesh(buildSteerableWheelGeo(BODY_SPECS.sedan, side), wheelMat, Math.max(1, wheels + SPARE * 4));
     m.count = 0;
     m.frustumCulled = false;
     m.castShadow = true;
@@ -197,17 +238,63 @@ function buildParkedCars(group, nearTrack = null) {
 
   const put = (mesh, i, set, k) => {
     const n = mesh.count++;
-    set.cars[k].slot = mesh; set.cars[k].n = n;
-    mesh.setMatrixAt(n, set.matrices[k]);
     const c = set.cars[k];
+    c.slot = mesh; c.n = n;
+    mesh.setMatrixAt(n, c.mat);
     mesh.geometry.attributes.paintColor.array.set(c.paint, n * 3);
     mesh.geometry.attributes.carState.array.set([0, 0, 0, c.style], n * 4);
   };
+  // streamed: the cells within reach made, those well out of it let go; each set's cars are then its cells' and the ones
+  // left by the player. `onColliders(added, removed)` hands the boxes to the player's colliders.
+  const builtCells = new Map();
+  const goneAt = new Set();
+  const spotKey = (x, z) => `${Math.round(x * 2)},${Math.round(z * 2)}`;
+  let onColliders = null;
+  function streamCells(px, pz) {
+    const added = [], removed = new Set();
+    let changed = false;
+    for (const [k, cars] of builtCells) {
+      const cx = Math.floor(k / 100000 + 0.5), cz = k - cx * 100000;
+      const d = Math.hypot(Math.max(cx * CELL - px, 0, px - (cx + 1) * CELL), Math.max(cz * CELL - pz, 0, pz - (cz + 1) * CELL));
+      if (d < LET_GO) continue;
+      for (const c of cars) { removed.add(c.collider); rolling.delete(c); }
+      builtCells.delete(k);
+      changed = true;
+    }
+    for (const [k, list] of spotCells) {
+      if (builtCells.has(k)) continue;
+      const cx = Math.floor(k / 100000 + 0.5), cz = k - cx * 100000;
+      const d = Math.hypot(Math.max(cx * CELL - px, 0, px - (cx + 1) * CELL), Math.max(cz * CELL - pz, 0, pz - (cz + 1) * CELL));
+      if (d > STREAM_R) continue;
+      const cars = [];
+      for (const s of list) {
+        if (goneAt.has(spotKey(s.x, s.z))) continue;
+        const car = carOf(s);
+        cars.push(car);
+        added.push(car.collider);
+      }
+      builtCells.set(k, cars);
+      changed = true;
+    }
+    if (!changed) return;
+    for (const set of sets) set.cars = [...set.left];
+    for (const cars of builtCells.values()) {
+      for (const c of cars) {
+        const set = sets.find((t) => t.kind === c.kind);
+        if (set && set.cars.length < set.capacity) set.cars.push(c);
+      }
+    }
+    colliders.length = 0;
+    for (const set of sets) for (const c of set.cars) colliders.push(c.collider);
+    onColliders?.(added, removed);
+  }
+
   let lastX = Infinity, lastZ = Infinity;
   function update(camera) {
     const px = camera.position.x, pz = camera.position.z;
     if (Math.hypot(px - lastX, pz - lastZ) < 12) return;
     lastX = px; lastZ = pz;
+    if (streamed) streamCells(px, pz);
     const far2 = FAR * FAR, near2 = NEAR * NEAR;
     wheelL.count = 0; wheelR.count = 0;
     for (const set of sets) {
@@ -220,7 +307,7 @@ function buildParkedCars(group, nearTrack = null) {
         if (d2 > far2) continue;
         put(d2 < near2 ? set.near : set.far, 0, set, k);
         if (d2 < near2 && wheelL.count + 2 <= wheelL.instanceMatrix.count) {
-          const w = set.wheels[k];
+          const w = c.wheelMats;
           c.wn = wheelL.count;
           wheelL.setMatrixAt(wheelL.count++, w[0]); wheelL.setMatrixAt(wheelL.count++, w[1]);
           wheelR.setMatrixAt(wheelR.count++, w[2]); wheelR.setMatrixAt(wheelR.count++, w[3]);
@@ -323,14 +410,14 @@ function buildParkedCars(group, nearTrack = null) {
       [c.pitch, c.roll] = groundTilt(c.x, c.z, c.yaw);
       col.minY = c.g + c.y; col.maxY = c.g + c.y + 1.6;
       if (!c.set) continue;
-      matrixOf(c, c.set.matrices[c.k]);
-      wheelsOf(c, c.set.wheels[c.k]);
+      matrixOf(c, c.mat);
+      wheelsOf(c, c.wheelMats);
       if (c.slot) {
-        c.slot.setMatrixAt(c.n, c.set.matrices[c.k]);
+        c.slot.setMatrixAt(c.n, c.mat);
         c.slot.instanceMatrix.needsUpdate = true;
       }
       if (c.wn >= 0) {
-        const w = c.set.wheels[c.k];
+        const w = c.wheelMats;
         wheelL.setMatrixAt(c.wn, w[0]); wheelL.setMatrixAt(c.wn + 1, w[1]);
         wheelR.setMatrixAt(c.wn, w[2]); wheelR.setMatrixAt(c.wn + 1, w[3]);
         wheelL.instanceMatrix.needsUpdate = true;
@@ -349,6 +436,7 @@ function buildParkedCars(group, nearTrack = null) {
     if (car) {
       car.gone = true;
       car.collider.maxY = -Infinity;
+      goneAt.add(spotKey(car.x, car.z));
     }
     let left = null;
     if (drop && BODY_SPECS[drop.kind]) {
@@ -357,8 +445,8 @@ function buildParkedCars(group, nearTrack = null) {
       if (set.cars.length < set.capacity) {
         left = record(drop, drop.kind, drop.hex, drop.style ?? 0);
         set.cars.push(left);
-        set.matrices.push(matrixOf(left));
-        set.wheels.push(wheelsOf(left));
+        set.left.push(left);
+        colliders.push(left.collider);
       }
     }
     lastX = Infinity;
@@ -373,15 +461,19 @@ function buildParkedCars(group, nearTrack = null) {
     for (const step of list || []) {
       const [x, z] = step.take || [];
       const car = Number.isFinite(x) && Number.isFinite(z) ? nearest(x, z, 0.6) : null;
-      if (step.take && !car) continue;
+      // streamed, a car taken where no cell is made yet stays gone once one is
+      if (step.take && !car && streamed) goneAt.add(spotKey(x, z));
+      if (step.take && !car && !streamed) continue;
       const done = take(car, step.drop);
+      if (!car && step.take) history[history.length - 1].take = step.take;
       if (done?.collider) added.push(done.collider);
     }
     return added;
   }
 
   console.info(`[parked] ${spots.length} parked cars, ${spots.filter((s) => s.street).length} on the streets`);
-  return { group, colliders, update, step, wake, count: spots.length, nearest, take, replay, history };
+  return { group, colliders, update, step, wake, count: spots.length, nearest, take, replay, history,
+    set onColliders(fn) { onColliders = fn; } };
 }
 
 export { buildParkedCars };

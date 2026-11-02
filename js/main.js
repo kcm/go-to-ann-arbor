@@ -22,6 +22,7 @@ import { buildShopSigns } from './shop-signs.js';
 import { ThirdPersonControllerManager } from './controllers.js';
 import { TouchControls } from './touch-controls.js';
 import { reportMemory } from './memory-report.js';
+import { gpuOnly, releaseUploaded, useRenderer } from './gpu-only.js';
 import { TIER } from './device-tier.js';
 import { GamepadControls } from './gamepad-controls.js';
 import { CameraSystem, CAMERA_PRESETS } from './cameras.js';
@@ -111,6 +112,7 @@ async function initApp() {
     await made.init();
     return made;
   });
+  useRenderer(renderer);
   // Lamp's runtime draws it at 1920x1080 and fits that to the window (game() below).
   renderer.shadowMap.enabled = QUALITY.shadows;
   if (QUALITY.streetLights) renderer.lighting = new ClusteredLighting(256, 32, 28, 48);
@@ -168,17 +170,19 @@ async function initApp() {
   // (cityPart), and kept through a change that isn't its own (see the top of this file): `inputs` are what it's built
   // from, so a part built again builds again the parts made from it. Each part's time is in the "[init]" line.
   // `cull` is setupSceneCulling, named in each part's build so a change to the culling builds the culled parts again.
-  function cityPart(build, { cull = null } = {}) {
+  // A `still` part never changes once built: its meshes keep their vertex data on the GPU only (gpu-only.js).
+  function cityPart(build, { cull = null, still = false } = {}) {
     const group = new THREE.Group();
     const made = build(group);
     // A part that waits for its ground layers (terrain.js) is put together once they're in
-    if (made instanceof Promise) return made.then((m) => finishPart(group, m, cull));
-    return finishPart(group, made, cull);
+    if (made instanceof Promise) return made.then((m) => finishPart(group, m, cull, still));
+    return finishPart(group, made, cull, still);
   }
-  function finishPart(group, made, cull) {
+  function finishPart(group, made, cull, still) {
     // Island-wide static geometry: chunk & distance-cull the small props, shadow stand-ins for the big casters
     // (scene-culling.js)
     const culled = cull ? cull(group, [group], QUALITY.shadows) : []; // no stand-ins without shadows
+    if (still) gpuOnly(group);
     return {
       group, made, culled,
       dispose() {
@@ -194,7 +198,7 @@ async function initApp() {
     // back from what that start saved: terrain.js)
     await setOnTerrain(g.getObjectByName('CityGrid'));
     return made;
-  }, { cull: setupSceneCulling }), { inputs: [heights], from: [CITY_MAP, 'js/cascades.js', 'js/river.js', 'js/tsl-materials.js'] });
+  }, { cull: setupSceneCulling, still: true }), { inputs: [heights], from: [CITY_MAP, 'js/cascades.js', 'js/river.js', 'js/tsl-materials.js'] });
   const cityGrid = grid.made;
   markInit('cityGrid');
   // Lamp: the Argo Cascades' rocks and white water, on the steps of their water (cascades.js)
@@ -202,12 +206,12 @@ async function initApp() {
   // Lamp: kayakers and tubers on their way down the river from the cascades (river-people.js)
   const riverPeoplePart = live.keep('riverPeople', () => cityPart((g) => buildRiverPeople(g)), { inputs: [heights, grid] });
   await showLoadingStage('Laying out the hills of Washtenaw County...');
-  const outskirtsPart = live.keep('outskirts', () => cityPart((g) => buildOutskirts(g), { cull: setupSceneCulling }),
+  const outskirtsPart = live.keep('outskirts', () => cityPart((g) => buildOutskirts(g), { cull: setupSceneCulling, still: true }),
     { inputs: [heights, grid], from: ['js/outskirts.js'] });
   const outskirts = outskirtsPart.made;
   markInit('outskirts');
   await showLoadingStage('Building the Big House...');
-  const landmarks = live.keep('landmarks', () => cityPart((g) => buildLandmarks(g), { cull: setupSceneCulling }), { inputs: [heights], from: [CITY_MAP, 'js/stadium-geodata.js'] });
+  const landmarks = live.keep('landmarks', () => cityPart((g) => buildLandmarks(g), { cull: setupSceneCulling, still: true }), { inputs: [heights], from: [CITY_MAP, 'js/stadium-geodata.js'] });
   const landmarkColliders = landmarks.made.colliders;
   markInit('landmarks');
   await showLoadingStage('Generating building footprints and facades...');
@@ -222,7 +226,7 @@ async function initApp() {
   // the roof shapes OpenStreetMap's mappers tagged (build-roof-shapes.py), for the houses that have one
   const roofBytes = await asset('data/roof-shapes.json');
   setRoofShapes(roofBytes ? JSON.parse(new TextDecoder().decode(roofBytes)) : null);
-  const blocks = live.keep('blocks', () => cityPart((g) => buildCityBlocks(g, landmarks.made.colliders, addresses, gasStations), { cull: setupSceneCulling }),
+  const blocks = live.keep('blocks', () => cityPart((g) => buildCityBlocks(g, landmarks.made.colliders, addresses, gasStations), { cull: setupSceneCulling, still: true }),
     { inputs: [heights, landmarks], from: [CITY_MAP, ...BUILDING_DATA, 'data/addresses.json', 'data/districts.json', 'data/gas-stations.json', 'data/roof-shapes.json'] });
   const cityBlocks = blocks.made;
   markInit('blocks');
@@ -238,7 +242,7 @@ async function initApp() {
     const made = buildStreetDetails(g, allColliders, streetFurniture);
     await setOnTerrain(g.getObjectByName('StreetDetails'));
     return made;
-  }, { cull: setupSceneCulling }), { inputs: [heights, grid, outskirtsPart, landmarks, blocks], from: [...TREE_DATA, 'data/street-furniture.json', 'js/street-details.js'] });
+  }, { cull: setupSceneCulling, still: true }), { inputs: [heights, grid, outskirtsPart, landmarks, blocks], from: [...TREE_DATA, 'data/street-furniture.json', 'js/street-details.js'] });
   const streetDetails = details.made;
   markInit('streetDetails');
   await showLoadingStage('Creating traffic and pedestrian routes...');
@@ -267,12 +271,12 @@ async function initApp() {
       o.geometry.boundingSphere.radius += 16;
     });
     return made;
-  }, { cull: setupSceneCulling }), { inputs: [heights, traffic], from: [CITY_MAP, 'js/road-network.js'] });
+  }, { cull: setupSceneCulling, still: true }), { inputs: [heights, traffic], from: [CITY_MAP, 'js/road-network.js'] });
   markInit('roadPaint');
   // Traffic lights and stop & yield signs where the road network put them (traffic-controls.js)
-  const controlsPart = live.keep('trafficControls', () => cityPart((g) => buildTrafficControls(g, traffic.made.network), { cull: setupSceneCulling }), { inputs: [heights, traffic, details] });
+  const controlsPart = live.keep('trafficControls', () => cityPart((g) => buildTrafficControls(g, traffic.made.network), { cull: setupSceneCulling, still: true }), { inputs: [heights, traffic, details] });
   // Signs over the real shops, restaurants and cafes (shop-signs.js, from OpenStreetMap)
-  const signsPart = live.keep('shopSigns', () => cityPart((g) => buildShopSigns(g), { cull: setupSceneCulling }), { inputs: [heights] });
+  const signsPart = live.keep('shopSigns', () => cityPart((g) => buildShopSigns(g), { cull: setupSceneCulling, still: true }), { inputs: [heights], from: ['js/shop-signs.js'] });
   await showLoadingStage('Laying the railroads...');
   // The tracks and the trains on them, stood on the ground where they're built (railways.js)
   // where streets cross the tracks at grade, with gates (build-rail-crossings.py, OpenStreetMap)
@@ -281,12 +285,22 @@ async function initApp() {
   // Amtrak's Wolverine stops at Ann Arbor on its timetable (build-wolverine.py, from Amtrak's GTFS feed)
   const wolverineBytes = await asset('data/wolverine.json');
   const wolverine = wolverineBytes ? JSON.parse(new TextDecoder().decode(wolverineBytes)) : null;
-  const railPart = live.keep('railways', () => cityPart((g) => buildRailways(g, railCrossings, wolverine)), { inputs: [heights], from: ['data/rail-crossings.json', 'data/wolverine.json'] });
+  const railPart = live.keep('railways', () => cityPart((g) => buildRailways(g, railCrossings, wolverine), { still: true }), { inputs: [heights], from: ['data/rail-crossings.json', 'data/wolverine.json'] });
   const railways = railPart.made;
   // Cars parked in the lots and along the main streets downtown, solid to the player (parked-cars.js)
   const parkedPart = live.keep('parkedCars', () => cityPart((g) => buildParkedCars(g, railways.nearTrack)), { inputs: [heights], from: ['js/parked-cars.js', 'js/railways.js'] });
   const parkedCars = parkedPart.made;
   allColliders.push(...parkedCars.colliders);
+  // streamed, the parked cars near the camera come and go, and their boxes with them (parked-cars.js)
+  parkedCars.onColliders = (added, removed) => {
+    if (removed.size) {
+      let n = 0;
+      for (const c of allColliders) if (!removed.has(c)) allColliders[n++] = c;
+      allColliders.length = n;
+    }
+    allColliders.push(...added);
+    controllerManager._colliderCells = null; // (only from the frame step, once it's made)
+  };
   // Road work: the blocks traffic.js closed, barricaded, coned and dug up (road-work.js); the machines are solid
   const roadWorkPart = live.keep('roadWork', () => cityPart((g) => buildRoadWork(g, traffic.made.closures)), { inputs: [heights, traffic], from: ['js/road-work.js'] });
   const roadWork = roadWorkPart.made;
@@ -294,10 +308,29 @@ async function initApp() {
   // Tree trunks, lamp posts, signal poles and sign posts: thin and solid, so the car crashes into them and the bike
   // throws its rider (`thin`: the helicopter flies through them)
   // and each goes over when a car hits it hard enough (knockdowns.js)
-  for (const o of [...(details.made.obstacles || []), ...(controlsPart.made.obstacles || [])]) {
+  const obstacleBox = (o) => {
     const g = groundHeight(o.x, o.z);
     const knock = o.kind && (o.pose || o.parts?.length) ? { ...o, g, down: false } : null;
-    allColliders.push({ minX: o.x - o.r, maxX: o.x + o.r, minZ: o.z - o.r, maxZ: o.z + o.r, minY: g - 1, maxY: g + 6, thin: true, knock });
+    return { minX: o.x - o.r, maxX: o.x + o.r, minZ: o.z - o.r, maxZ: o.z + o.r, minY: g - 1, maxY: g + 6, thin: true, knock };
+  };
+  for (const o of [...(details.made.obstacles || []), ...(controlsPart.made.obstacles || [])]) allColliders.push(obstacleBox(o));
+  // streamed, the trees near the camera come and go, and their trunks with them (trees.js)
+  const treeField = details.made.treeField;
+  if (TIER.stream && treeField?.obstacles) {
+    const boxOf = new Map();
+    const add = (list) => { for (const o of list) { const b = obstacleBox(o); boxOf.set(o, b); allColliders.push(b); } };
+    add(treeField.obstacles());
+    treeField.onObstacles = (added, removed) => {
+      if (removed.length) {
+        const gone = new Set();
+        for (const o of removed) { gone.add(boxOf.get(o)); boxOf.delete(o); }
+        let n = 0;
+        for (const c of allColliders) if (!gone.has(c)) allColliders[n++] = c;
+        allColliders.length = n;
+      }
+      add(added);
+      controllerManager._colliderCells = null;
+    };
   }
   // a hydrant knocked off its main gushes water (hydrant-spray.js)
   const hydrantSpray = createHydrantSpray(scene);
@@ -483,9 +516,6 @@ async function initApp() {
   }
   console.log(`[quality] ${JSON.stringify(QUALITY)}`);
   reportMemory(scene, renderer, log, TIER.name !== 'full');
-  { const odd = []; scene.getObjectByName('CityGrid')?.traverse((o) => { if (o.isMesh && !o.name && !o.userData.streamed) odd.push(o); }); odd.sort((p, q) => q.geometry.attributes.position.count - p.geometry.attributes.position.count); if (!odd[0]?.geometry.boundingSphere) odd.forEach((o) => o.geometry.computeBoundingSphere()); log('[temp odd] ' + odd.slice(0, 8).map((o) => `${o.geometry.attributes.position.count}v r${Math.round(o.geometry.boundingSphere.radius)} at ${Math.round(o.geometry.boundingSphere.center.x)},${Math.round(o.geometry.boundingSphere.center.z)} parent ${o.parent?.name || o.parent?.type} ${o.material.color?.getHexString()} ${o.material.uuid.slice(0, 4)}`).join(' | ')); } // TEMP
-  { const per = new Map(), seen = new Set(); for (const nm of ['CityGrid', 'CityBlocks', 'StreetDetails']) scene.getObjectByName(nm)?.traverse((o) => { if (!o.geometry || seen.has(o.geometry)) return; seen.add(o.geometry); let b = 0; for (const at of [...Object.values(o.geometry.attributes), o.geometry.index].filter(Boolean)) b += at.array.byteLength; if (o.isInstancedMesh) b += o.instanceMatrix.array.byteLength; const k = nm + '/' + (o.name || o.parent?.name || ('?' + (o.material?.name || o.material?.type) + (o.geometry.index ? 'ix' : '') + Object.keys(o.geometry.attributes).join(''))) + (o.userData.streamed ? '[s]' : '') + (o.isInstancedMesh ? '[i]' : ''); const e = per.get(k) || [0, 0]; e[0] += b; e[1]++; per.set(k, e); });
-    log('[temp mem] ' + [...per].sort((a, b) => b[1][0] - a[1][0]).slice(0, 30).map(([k, [b, n]]) => `${k} ${(b / 1048576).toFixed(0)}x${n}`).join(', ')); } // TEMP
 
   // On WebGPU, small InstancedMeshes (<= 1000 instances) keep their matrices in uniform buffers that three.js
   // re-uploads on every draw of every pass (~2.5 MB/frame with the shadow cascades, stalling the GPU queue).
@@ -837,6 +867,7 @@ async function initApp() {
   }
   // "Now": Ann Arbor's real sky, its sunrise and sunset worked out here, put on again every minute
   let nowCheckedAt = 0;
+  let releaseFrame = 0, freedSinceReport = 0, reportedAt = 0;
   function describeNow() {
     const btn = document.getElementById('time-now');
     if (!btn) return;
@@ -1290,6 +1321,14 @@ async function initApp() {
       const { x, z } = cameraSystem.camera.position;
       updateGroundStreaming(x, z);
       houseStream?.update(x, z);
+    }
+    // the still parts' script copies let go once uploaded; the memory logged again once they've mostly gone
+    if (warmedUp && (++releaseFrame & 31) === 0) {
+      freedSinceReport += releaseUploaded(renderer);
+      if (freedSinceReport > 0 && elapsed - reportedAt > 12) {
+        reportedAt = elapsed; freedSinceReport = 0;
+        reportMemory(scene, renderer, log, TIER.name !== 'full');
+      }
     }
     // Traffic collisions can move the player after controller updates; finalize moving hierarchies here.
     for (const root of dynamicRoots) root.updateMatrixWorld();

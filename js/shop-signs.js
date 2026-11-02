@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { GEO } from './city-geodata.js';
 import { groundHeight } from './terrain.js';
+import { TIER } from './device-tier.js';
 
 // Lamp: a sign over each named shop, restaurant, cafe and bar from OpenStreetMap (GEO.signs, placed by the generator on
 // the wall of its building that faces the street): a painted board in its category's color with the name in cream
@@ -20,10 +21,14 @@ function buildShopSigns(group) {
   const count = Math.min(list.length / 7, COLS * ROWS);
   if (!count) return { count: 0 };
 
+  // painted at half the size where memory is short (a phone, a Mac with less memory: device-tier.js)
+  const K = TIER.stream ? 0.5 : 1;
+  const W = CELL_W * COLS, H = CELL_H * Math.ceil(count / COLS);
   const canvas = document.createElement('canvas');
-  canvas.width = CELL_W * COLS;
-  canvas.height = CELL_H * Math.ceil(count / COLS);
+  canvas.width = W * K;
+  canvas.height = H * K;
   const ctx = canvas.getContext('2d');
+  ctx.scale(K, K);
 
   const face = { pos: [], uv: [], nrm: [] };
   const back = { pos: [], nrm: [] };
@@ -72,8 +77,8 @@ function buildShopSigns(group) {
     const hw = w / 2;
     const fx = x + nx * DEPTH, fz = z + nz * DEPTH;
     const P = (px, pz, s, py) => [px + ux * s, py, pz + uz * s];
-    const u0 = cx / canvas.width, u1 = (cx + CELL_W) / canvas.width;
-    const v0 = 1 - (cy + CELL_H) / canvas.height, v1 = 1 - cy / canvas.height;
+    const u0 = cx / W, u1 = (cx + CELL_W) / W;
+    const v0 = 1 - (cy + CELL_H) / H, v1 = 1 - cy / H;
     quad(face, [P(fx, fz, -hw, y0), P(fx, fz, hw, y0), P(fx, fz, hw, y1), P(fx, fz, -hw, y1)], [nx, 0, nz],
       [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
     // its edges: a shallow box back to the wall

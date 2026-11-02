@@ -31,7 +31,6 @@ async function chooseTier() {
     if (typeof memory === 'number' && memory > 0 && memory <= 17) name = 'light';
   }
   const asked = new URLSearchParams(location.search).get('tier');
-  if (!window.LampNative?.available && !asked) name = 'phone'; // TEMP: the preview tries the phone setting
   if (TIERS[asked]) name = asked;
   Object.assign(TIER, TIERS[name]);
   log(`[tier] ${name}${memory ? ` (${Math.round(memory)} GB)` : ''}${TOUCH_DEVICE ? ', a touch device' : ''}`);
