@@ -504,6 +504,7 @@ function getStorefrontSignTexture() {
 }
 
 const SIGN_NAMES = false;
+const GHOST_ADS = false;
 
 // Shops span several upstairs bays; every material output shares their glazing and door layout.
 function createStorefront(facade, seed, local) {
@@ -1031,7 +1032,8 @@ function createPreWarBuildingMaterial(opts = {}) {
     const signFw = vec2(fwidth(su), fwidth(sv));
     const panel = boxCoverage(su, 0.0, 1.0, signFw.x.mul(0.5)).mul(boxCoverage(sv, 0.0, 1.0, signFw.y.mul(0.5))).mul(hasSign);
     const signPaint = vec4(0.0).toVar();
-    If(panel.greaterThan(0.001), () => {
+    // Lamp: no faded made-up ads on Ann Arbor's walls
+    if (GHOST_ADS) If(panel.greaterThan(0.001), () => {
       const pal = fract(tone.mul(29.3));
       const ground = mix(mix(color(0xd3c9ae), color(0x86392b), step(0.5, pal)), color(0x2b3340), step(0.8, pal));
       const ink = mix(mix(color(0x6b2a20), color(0xddd2b6), step(0.5, pal)), color(0xd5c086), step(0.8, pal));

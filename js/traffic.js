@@ -1,5 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { buildRoadNetwork } from './road-network.js';
+import { planClosures } from './road-work.js';
+import { log } from '../lamp-game.js';
 import { createPedestrianSystem } from './pedestrian-system.js';
 import { vehicleContact, resolveVehicleContact, sweptVehicleContact } from './vehicle-physics.js';
 import { signalPhase, walkSignal } from './city-config.js';
@@ -26,6 +28,7 @@ import {
   createLoftedBusMaterial
 } from './bus.js';
 import { groundHeight, groundTilt } from './terrain.js';
+import { MOTO_SPECS, buildMotoGeometry, createMotoMaterial } from './motorcycles.js';
 import { loadTheRide, createSchedule, buildStopSigns } from './theride.js';
 
 // Cars and buses follow the road graph, obey signals, yield at crossings and react to collisions.
@@ -58,8 +61,17 @@ const CAR_KINDS = {
   minivan: { half: 2.6, halfWidth: 0.92, axle: 1.52, halfL: 2.52, mass: 2000, engine: 'sedan' },
   pickup: { half: 2.86, halfWidth: 0.96, axle: 1.92, halfL: 2.78, mass: 2400, engine: 'suv' },
   van: { half: 2.96, halfWidth: 0.95, axle: 1.8, halfL: 2.88, mass: 2700, engine: 'suv' },
-  sports: { half: 2.25, halfWidth: 0.9, axle: 1.36, halfL: 2.18, mass: 1450, engine: 'sedan' }
+  sports: { half: 2.25, halfWidth: 0.9, axle: 1.36, halfL: 2.18, mass: 1450, engine: 'sedan' },
+  // motorcycles (motorcycles.js), in town traffic only
+  ...Object.fromEntries(Object.values(MOTO_SPECS).map((m) =>
+    [m.name, { half: m.half, halfWidth: m.halfWidth, axle: m.axle, halfL: m.halfL, mass: m.mass, engine: m.quiet ? 'cyclist' : 'moto', moto: true, curb: !!m.quiet }]))
 };
+// A car kind's shape: a car's body or a motorcycle
+const specOf = (kind) => BODY_SPECS[kind] || MOTO_SPECS[kind];
+const MOTO_KINDS = Object.keys(MOTO_SPECS).filter((k) => !MOTO_SPECS[k].quiet);
+// bicycles, e-scooters and hoverboards: at the curb side of the lane, where cars pass them
+const CURB_KINDS = Object.keys(MOTO_SPECS).filter((k) => MOTO_SPECS[k].quiet);
+const CURB_OFFSET = 1.2;
 
 // Retire distant actors even when looking their way: keeping them indefinitely starves upcoming streets.
 // Replacements may enter the far view, but nearby visible roads and sidewalks are protected from pop-in.
@@ -134,6 +146,8 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   // =========================================================================
   const network = buildRoadNetwork(sidewalks, obstacles, signalIntersections);
   const { nodes, edges, connector, curvePoint } = network;
+  // Lamp: blocks shut for road work (road-work.js): nobody turns into one or starts on one
+  const closures = planClosures(edges);
 
   // Sides of an intersection (road-network.js step 9): a grid intersection's are 0 east, 1 west, 2 south, 3 north;
   // centreline junctions number their arms from 4. Where lane i of edge e meets a crosswalk, measured along the
@@ -202,10 +216,19 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     let bodyType = FLEET_MIX[i % FLEET_MIX.length];
     if (bodyType === 'sedan' && i % 40 === 17) bodyType = 'sports';
     if (isPolice) bodyType = (i % 100) === 56 ? 'suv' : 'sedan';
+    // about one in ten is a motorcycle, of each kind in turn
+    const curb = !isPolice && i % 10 === 7;
+    const moto = curb || (!isPolice && i % 10 === 3);
+    if (curb) bodyType = CURB_KINDS[Math.floor(i / 10) % CURB_KINDS.length];
+    else if (moto) bodyType = MOTO_KINDS[Math.floor(i / 10) % MOTO_KINDS.length];
 
     let col;
     let style;
-    if (isPolice) {
+    if (moto) {
+      const paints = MOTO_SPECS[bodyType].paints;
+      col = new THREE.Color(paints[(i * 7 + 3) % paints.length]);
+      style = 0;
+    } else if (isPolice) {
       col = policeWhite;
       style = carStyleCode({ livery: 1, metallic: 0, trim: 2, wheel: 3, plate: i });
       policeCounts[bodyType]++;
@@ -221,7 +244,8 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     const car = createVehicle(false, kind.half, kind.halfWidth, kind.axle, CAR_DRIVER, 10 + (i % 5) * 0.9);
     // paint as float32 values, so renderCar() can tell whether an instance slot's paint changes by comparing
     const paint = [Math.fround(col.r), Math.fround(col.g), Math.fround(col.b)];
-    Object.assign(car, { isPolice, bodyType, paint, style, halfL: kind.halfL, mass: kind.mass, engine: kind.engine });
+    Object.assign(car, { isPolice, bodyType, paint, style, halfL: kind.halfL, mass: kind.mass, engine: kind.engine, moto, curb });
+    if (curb) car.curbSpeed = MOTO_SPECS[bodyType].curbSpeed * (0.85 + (i % 7) * 0.05);
     cars.push(car);
   }
 
@@ -232,8 +256,19 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   // turn signals, livery (1 = NYPD).
   const bodies = {};
   for (const kind of Object.keys(CAR_KINDS)) {
-    const spec = BODY_SPECS[kind];
     const n = Math.max(1, counts[kind]);
+    if (CAR_KINDS[kind].moto) {
+      const spec = MOTO_SPECS[kind];
+      const mat = createMotoMaterial();
+      const lodMesh = (g) => {
+        g.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3));
+        g.setAttribute('carState', new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4));
+        return new THREE.InstancedMesh(g, mat, n);
+      };
+      bodies[kind] = { near: lodMesh(buildMotoGeometry(spec, true)), far: lodMesh(buildMotoGeometry(spec, false)), shadow: [0.75, spec.wb + 0.9, 0] };
+      continue;
+    }
+    const spec = BODY_SPECS[kind];
     const mat = createLoftedCarMaterial(spec);
     const lodMesh = (g) => {
       g.setAttribute('paintColor', new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3));
@@ -603,7 +638,8 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
 
   // First vehicle ahead of position s in a lane list
   function ahead(list, s, v) {
-    for (const o of list) if (o.s > s && o.v !== v) return o;
+    // (a car passes a bicycle or scooter at the curb rather than queueing behind it)
+    for (const o of list) if (o.s > s && o.v !== v && (v.curb || !o.v.curb)) return o;
     return null;
   }
 
@@ -621,6 +657,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   const CLASS_MPH = [55, 35, 30, 30, 25, 30, 25];
   const vWant = (v) => {
     const e = v.edge;
+    if (v.curb) return v.curbSpeed;
     if (!e || !e.general) return v.v0;
     const mph = e.mph || CLASS_MPH[e.cls ?? 4] || 25;
     return mph * 0.447 * (v.v0 / 11.8);
@@ -667,13 +704,13 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     if (v.route) {
       const next = v.route.edges[v.ri + 1];
       const m = next && e.moves.find((o) => o.to === next);
-      if (m && !(fromLane && m.out[v.lane] < 0)) return m;
+      if (m && !m.to.closed && !(fromLane && m.out[v.lane] < 0)) return m;
       v.route = null;
     }
     let total = 0;
     for (let k = 0; k < e.moves.length; k++) {
       const m = e.moves[k];
-      let w = m.turn === 'S' ? (v.bus ? 8 : 3) : 1;
+      let w = m.to.closed ? 0 : m.turn === 'S' ? (v.bus ? 8 : 3) : 1;
       w *= CLASS_TRAFFIC[m.to.cls ?? 4]; // Lamp: drivers keep to main roads more than side streets
       if (v.bus && m.turn !== 'S' && m.to.lanes.length < 2) w *= 0.05;
       if (fromLane) {
@@ -694,7 +731,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     }
     // No move from this lane (a lane the road graph couldn't lead anywhere): take any move, changing lanes for it
     if (!pick && fromLane) return chooseMove(v, false);
-    return pick || e.moves[0] || null;
+    return pick || e.moves.find((m) => !m.to.closed) || e.moves[0] || null;
   }
 
   // Could the vehicle of lane entry o, approaching the end of edge a, still stop easily before its line? Vehicles
@@ -1179,6 +1216,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   }
 
   function leave(v) {
+    if (v.move.to.closed && !leave.warned) { leave.warned = true; log(`[road work] a car turned into closed ${v.move.to.street} from ${v.edge.street} (${v.route ? 'on a route' : v.bus ? 'bus' : 'car'})`); }
     v.s = v.cs - v.conn.len;
     v.edge = v.move.to;
     v.lane = v.out;
@@ -1298,8 +1336,9 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     pathPoint(v, v.conn ? v.cs : v.s, at);
     v.tx = at.dx;
     v.tz = at.dz;
-    v.x = at.x - at.dz * v.dl;
-    v.z = at.z + at.dx * v.dl;
+    const dl = v.curb ? v.dl + CURB_OFFSET : v.dl;
+    v.x = at.x - at.dz * dl;
+    v.z = at.z + at.dx * dl;
     const nose = Math.atan2(at.dx, at.dz) - v.yaw;
     v.nose = nose - Math.round(nose / (Math.PI * 2)) * Math.PI * 2;
   }
@@ -1326,8 +1365,10 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
 
     v.pitchVel += ((-0.008 * v.acc - v.pitch) * 68.0 - v.pitchVel * 10.8) * dt;
     v.pitch = clamp(v.pitch + v.pitchVel * dt, -0.22, 0.22);
-    v.rollVel += ((0.01 * v.speed * v.yawRate - v.roll) * 68.0 - v.rollVel * 10.8) * dt;
-    v.roll = clamp(v.roll + v.rollVel * dt, -0.26, 0.26);
+    // a car's body rolls out of a bend; a motorcycle leans into it
+    const rollTo = v.moto ? clamp(-Math.atan(v.speed * v.yawRate / 9.8), -0.6, 0.6) : 0.01 * v.speed * v.yawRate;
+    v.rollVel += ((rollTo - v.roll) * 68.0 - v.rollVel * 10.8) * dt;
+    v.roll = clamp(v.roll + v.rollVel * dt, v.moto ? -0.6 : -0.26, v.moto ? 0.6 : 0.26);
   }
 
   // Knock velocity from collisions carries v along and across its path, and dies down
@@ -1393,12 +1434,14 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     a.prevX = prevX; a.prevZ = prevZ;
     a.sin = Math.sin(heading); a.cos = Math.cos(heading);
     a.halfW = player.halfW; a.halfL = player.halfL;
-    a.mass = pe.type === 'car' ? 1700 : pe.type === 'cyclist' ? 95 : 80;
+    a.mass = pe.type === 'car' ? (pe.bike ? pe.drive?.mass || 300 : 1700) : pe.type === 'cyclist' ? 95 : 80;
     a.vx = a.sin * (pe.speed || 0) + (pe.vx || 0);
     a.vz = a.cos * (pe.speed || 0) + (pe.vz || 0);
     a.angularVel = pe.type === 'car' ? pe.angularVel || 0 : 0;
     readTrafficBody(v, b);
     if (!sweptVehicleContact(a, b, hit) && !vehicleContact(a, b, hit)) return;
+    // how fast the car itself comes at them: walking or riding into a car that's standing still knocks nobody down
+    const carComing = b.vx * hit.nx + b.vz * hit.nz;
     const speed = resolveVehicleContact(a, b, hit);
     const pShare = b.mass / (a.mass + b.mass);
     pe.position.x = hit.ax + hit.nx * hit.depth * pShare;
@@ -1425,7 +1468,9 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     impactSuspension(v, -hit.nx, -hit.nz, hit.impulse / b.mass);
     if (pe.type !== 'person') reportCollision(pe, v, hit.x, 0.58, hit.z, hit.nx, hit.nz, speed);
     // the player on foot or on the bike, hit hard enough to go down: flung the way the car pushed them
-    if ((pe.type === 'person' || pe.type === 'cyclist') && speed > 3.5) playerStruck?.(hit.nx * speed, hit.nz * speed, speed, pe.type);
+    if ((pe.type === 'person' || pe.type === 'cyclist') && speed > 3.5 && carComing > 3) playerStruck?.(hit.nx * speed, hit.nz * speed, speed, pe.type);
+    // a motorbike into a car (or a car into it) hard: its rider goes flying
+    else if (pe.bike && speed > 7) playerStruck?.(hit.nx * speed, hit.nz * speed, speed, 'motorbike');
     if (speed > 2.2) spawnCollisionSparks(hit.x, 0.58, hit.z, hit.nx, hit.nz, speed);
   }
 
@@ -1509,7 +1554,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
   function spawnVehicle(v, rMin, rMax, protectView) {
     for (let attempt = 0; attempt < 12; attempt++) {
       const e = nearEdges[Math.floor(Math.random() * nearEdges.length)];
-      if (!e || (v.bus && e.axis !== 'ave') || e.len < 2 * v.half + 10) continue;
+      if (!e || e.closed || (v.bus && e.axis !== 'ave') || e.len < 2 * v.half + 10) continue;
       if (Math.random() > CLASS_TRAFFIC[e.cls ?? 4]) continue; // Lamp: main roads are busier than side streets
       const lane = Math.floor(Math.random() * e.lanes.length);
       const along = (focusX - e.sx) * e.dx + (focusZ - e.sz) * e.dz;
@@ -1572,6 +1617,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
       const p = schedule.placeAt(trip, sec, free.half, { x: focusX, z: focusZ, r: NEAR_RADIUS + 300 });
       if (!p) continue;
       const e = p.route.edges[p.k];
+      if (e.closed) continue;
       const lane = e.lanes.length - 1;
       const x = e.sx + e.dx * p.s + e.rx * e.lanes[lane];
       const z = e.sz + e.dz * p.s + e.rz * e.lanes[lane];
@@ -1690,7 +1736,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     settle(c, rotY, 4.4, 1.8);
     const sinY = Math.sin(rotY);
     const cosY = Math.cos(rotY);
-    const spec = BODY_SPECS[c.bodyType];
+    const spec = specOf(c.bodyType);
     const forwardDist = (c.x - c.prevX) * sinY + (c.z - c.prevZ) * cosY;
     const rawStep = forwardDist / spec.wheelRadius;
     c.wheelSpin = (c.wheelSpin + Math.sign(rawStep) * Math.min(Math.abs(rawStep), 0.48)) % (Math.PI * 2);
@@ -1760,7 +1806,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
       }
     }
 
-    if (near) {
+    if (near && !c.moto) {
       const wi = wheelCars * 2;
       const ws = carWheelStyles.array;
       if (ws[wi] !== c.style || ws[wi + 1] !== c.style) {
@@ -1844,7 +1890,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
         const v = litVehicles[i];
         const fade = smoothDistFade(v._effDist, vehCutoff * 0.62, vehCutoff);
         if (fade <= 0.001) continue;
-        const spec = v.bus ? BUS_SPEC : BODY_SPECS[v.bodyType];
+        const spec = v.bus ? BUS_SPEC : specOf(v.bodyType);
         const fullReach = HEADLIGHTS.distance;
         let maxReach = fullReach;
         if (player.active && v.pAhead > 0 && v.pAhead < 30) {
@@ -1979,7 +2025,8 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
       vehicleCursor = (vehicleCursor + 1) % vehicles.length;
       if (v.bus) continue; // (TheRide's buses come by the timetable: scheduleBuses)
       const d = v.edge ? Math.hypot(v.x - focusX, v.z - focusZ) : Infinity;
-      if (d <= (jump ? NEAR_RADIUS : VEHICLE_RADIUS)) continue;
+      // (a car that somehow found its way into a closed block leaves it as soon as nobody's looking)
+      if (d <= (jump ? NEAR_RADIUS : VEHICLE_RADIUS) && !(v.edge?.closed && !visible(v.x, v.z, 22))) continue;
       budget--;
       spawnVehicle(v, jump ? 0 : 100, NEAR_RADIUS, !jump);
     }
@@ -2110,6 +2157,7 @@ function createTrafficSystem(scene, sidewalks, obstacles, signalIntersections) {
     setCollisionListener,
     takeCar,
     nearestCar,
+    closures,
     cars,
     buses,
     peds: pedestrianSystem.peds,
@@ -2144,7 +2192,7 @@ function createHighwayTraffic(scene, lanes) {
   const group = new THREE.Group();
   group.name = 'HighwayTraffic';
   scene.add(group);
-  const KINDS = Object.keys(CAR_KINDS);
+  const KINDS = Object.keys(CAR_KINDS).filter((kind) => !CAR_KINDS[kind].moto);
   let seed = 20240917;
   const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 

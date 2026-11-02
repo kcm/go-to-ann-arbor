@@ -190,17 +190,31 @@ const TRAINS = {
 
 function buildRailways(group, crossings = [], wolverine = null) {
   const rail = GEO.rail;
-  const result = { group, trains: [], update() {} };
+  const result = { group, trains: [], update() {}, trackTop: () => -Infinity };
   if (!rail) return result;
   const bridges = [];
 
   // The track: one merged mesh of ballast, decks and rails, and the ties as one instanced mesh
   const quads = [];
   const ties = [];
+  const cells = new Map(), CELL = 20, cellKey = (ix, iz) => ix * 100003 + iz;
   for (const [flat, bridge] of rail.tracks) {
     if (flat.length < 4) continue;
     const p = railPath(flat, bridge);
     trackGeometry(p, bridge, quads);
+    // its stretches on the ground, indexed for trackTop
+    if (!bridge) {
+      for (let i = 0; i + 1 < p.x.length; i++) {
+        const seg = [p.x[i], p.z[i], p.x[i + 1], p.z[i + 1], p.y[i], p.y[i + 1]];
+        const ix0 = Math.floor((Math.min(seg[0], seg[2]) - 3) / CELL), ix1 = Math.floor((Math.max(seg[0], seg[2]) + 3) / CELL);
+        const iz0 = Math.floor((Math.min(seg[1], seg[3]) - 3) / CELL), iz1 = Math.floor((Math.max(seg[1], seg[3]) + 3) / CELL);
+        for (let ix = ix0; ix <= ix1; ix++) for (let iz = iz0; iz <= iz1; iz++) {
+          const k = cellKey(ix, iz);
+          if (!cells.has(k)) cells.set(k, []);
+          cells.get(k).push(seg);
+        }
+      }
+    }
     const at = {};
     for (let s = 0.3; s < p.length; s += TIE_STEP) {
       sample(p, s, at);
@@ -221,6 +235,33 @@ function buildRailways(group, crossings = [], wolverine = null) {
       }
     }
   }
+  // How high something driving or walking over the track rides at (x, z): up on its ties and rails between the
+  // ballast's shoulders, sloping down off them to the ground, or -Infinity away from it (controllers.js)
+  // whether (x, z) is within r m of a track's middle (parked-cars.js keeps its cars off them)
+  result.nearTrack = (x, z, r) => {
+    const list = cells.get(cellKey(Math.floor(x / CELL), Math.floor(z / CELL)));
+    if (!list) return false;
+    for (const [x0, z0, x1, z1] of list) {
+      const dx = x1 - x0, dz = z1 - z0, L2 = dx * dx + dz * dz || 1;
+      const t = Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / L2));
+      if (Math.hypot(x - x0 - dx * t, z - z0 - dz * t) < r) return true;
+    }
+    return false;
+  };
+  result.trackTop = (x, z) => {
+    const list = cells.get(cellKey(Math.floor(x / CELL), Math.floor(z / CELL)));
+    if (!list) return -Infinity;
+    let top = -Infinity;
+    for (const [x0, z0, x1, z1, y0, y1] of list) {
+      const dx = x1 - x0, dz = z1 - z0, L2 = dx * dx + dz * dz || 1;
+      const t = Math.max(0, Math.min(1, ((x - x0) * dx + (z - z0) * dz) / L2));
+      const o = Math.hypot(x - x0 - dx * t, z - z0 - dz * t);
+      if (o >= 2.2) continue;
+      const h = o <= 1.3 ? 0.36 : 0.36 * (2.2 - o) / 0.9;
+      top = Math.max(top, y0 + (y1 - y0) * t + h);
+    }
+    return top;
+  };
   const pos = [], col = [];
   for (const [a, b, c, d, hex] of quads) {
     const k = C(hex);

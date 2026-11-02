@@ -98,6 +98,73 @@ function buildBigHouse(group, colliders) {
   for (const sz of [-1, 1]) flat(W, 0.2, 0xf2f2ee, 0.03, 0, sz * (L / 2 + EZ));
   // hash marks
   for (let yd = 1; yd < 100; yd++) for (const hx of [-3.08, 3.08]) flat(0.6, 0.1, 0xf2f2ee, 0.03, hx, -L / 2 + (yd / 100) * L);
+  // MICHIGAN across each end zone in maize outlined in white, its tops toward the end line
+  {
+    const cv = document.createElement('canvas');
+    cv.width = 2048; cv.height = 300;
+    const g = cv.getContext('2d');
+    g.font = 'bold 270px "Arial Black", "Helvetica Neue", Arial, sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.lineJoin = 'round'; g.lineWidth = 22; g.strokeStyle = '#ffffff';
+    g.strokeText('MICHIGAN', 1024, 160, 1960);
+    g.fillStyle = '#ffcb05';
+    g.fillText('MICHIGAN', 1024, 160, 1960);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    const mat = new THREE.MeshStandardNodeMaterial({ map: tex, transparent: true, depthWrite: false, roughness: 0.85,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const geo = new THREE.PlaneGeometry(W - 4, (W - 4) * 300 / 2048).rotateX(-Math.PI / 2);
+    for (const s of [-1, 1]) {
+      const word = new THREE.Mesh(geo, mat);
+      word.position.set(0, 0.035, s * (L / 2 + EZ / 2));
+      word.rotation.y = s > 0 ? Math.PI : 0;
+      word.renderOrder = 1;
+      field.add(word);
+    }
+  }
+  // the yard numbers, 6 ft tall with their bottoms 8 yards in from each sideline, tops toward it, and the little
+  // arrows beside them pointing to the nearer goal
+  const numberTex = new Map();
+  const numberMat = (n) => {
+    if (!numberTex.has(n)) {
+      const cv = document.createElement('canvas');
+      cv.width = 320; cv.height = 220;
+      const g = cv.getContext('2d');
+      g.fillStyle = '#fff';
+      g.font = 'bold 230px "Arial Black", "Helvetica Neue", Arial, sans-serif';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(String(n), 160, 118, 300);
+      const tex = new THREE.CanvasTexture(cv);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 8;
+      numberTex.set(n, new THREE.MeshStandardNodeMaterial({ color: 0xf2f2ee, map: tex, transparent: true, depthWrite: false,
+        roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+    }
+    return numberTex.get(n);
+  };
+  const numberGeo = new THREE.PlaneGeometry(2.66, 1.83).rotateX(-Math.PI / 2);
+  const arrowShape = new THREE.Shape();
+  arrowShape.moveTo(0, 0.45); arrowShape.lineTo(-0.23, -0.45); arrowShape.lineTo(0.23, -0.45);
+  const arrowGeo = new THREE.ShapeGeometry(arrowShape).rotateX(-Math.PI / 2); // points to -z
+  const lineMat = new THREE.MeshStandardNodeMaterial({ color: 0xf2f2ee, roughness: 0.9 });
+  const NX = W / 2 - 7.4 - 0.915;
+  for (let yd = 10; yd <= 90; yd += 10) {
+    const z = -L / 2 + (yd / 100) * L, n = yd <= 50 ? yd : 100 - yd;
+    for (const side of [-1, 1]) {
+      const num = new THREE.Mesh(numberGeo, numberMat(n));
+      num.position.set(side * NX, 0.035, z);
+      num.rotation.y = -side * Math.PI / 2; // the top of the numbers toward this sideline
+      num.renderOrder = 1;
+      field.add(num);
+      if (n === 50) continue;
+      const toward = yd < 50 ? -1 : 1;
+      const arrow = new THREE.Mesh(arrowGeo, lineMat);
+      arrow.position.set(side * (NX + 0.55), 0.035, z + toward * 1.75);
+      arrow.rotation.y = toward < 0 ? 0 : Math.PI;
+      field.add(arrow);
+    }
+  }
   // The Block M: slab serifs on its outer feet and top corners, inner legs standing on serifs of their own, and the
   // middle V coming down to a point; maize, outlined in blue
   const BLOCK_M = [[-5, -3.7], [-1.9, -3.7], [-1.9, -2.7], [-2.6, -2.7], [-2.6, 0.9], [0, -2.9], [2.6, 0.9], [2.6, -2.7],

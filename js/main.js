@@ -26,6 +26,7 @@ import { CameraSystem, CAMERA_PRESETS } from './cameras.js';
 import { LightingSystem, sunTimes } from './lighting.js';
 import { createKnockdowns } from './knockdowns.js';
 import { createHydrantSpray } from './hydrant-spray.js';
+import { createSkidEffects } from './skid-effects.js';
 import { CityMapSystem } from './city-map.js';
 import { setupSceneCulling, updateSceneCulling, cullAlso, showShadowStandIns } from './scene-culling.js';
 import { loadTerrain, setOnTerrain, groundHeight, waterLevel } from './terrain.js';
@@ -34,6 +35,7 @@ import { buildRiverPeople } from './river-people.js';
 import { CityAudioSystem } from './audio-system.js';
 import { fetchWeather, createPrecipitation } from './weather.js';
 import { fetchRiverFlow } from './river-gauge.js';
+import { buildRoadWork } from './road-work.js';
 
 // In its own window on the Mac the top strip is the title bar, which takes the clicks: the top panels sit below it
 if (window.webkit?.messageHandlers?.lampNative && /Mac/.test(navigator.platform) && navigator.maxTouchPoints === 0) document.documentElement.classList.add('mac-window');
@@ -270,9 +272,13 @@ async function initApp() {
   const railPart = live.keep('railways', () => cityPart((g) => buildRailways(g, railCrossings, wolverine)), { inputs: [heights], from: ['data/rail-crossings.json', 'data/wolverine.json'] });
   const railways = railPart.made;
   // Cars parked in the lots and along the main streets downtown, solid to the player (parked-cars.js)
-  const parkedPart = live.keep('parkedCars', () => cityPart((g) => buildParkedCars(g)), { inputs: [heights], from: ['js/parked-cars.js'] });
+  const parkedPart = live.keep('parkedCars', () => cityPart((g) => buildParkedCars(g, railways.nearTrack)), { inputs: [heights], from: ['js/parked-cars.js', 'js/railways.js'] });
   const parkedCars = parkedPart.made;
   allColliders.push(...parkedCars.colliders);
+  // Road work: the blocks traffic.js closed, barricaded, coned and dug up (road-work.js); the machines are solid
+  const roadWorkPart = live.keep('roadWork', () => cityPart((g) => buildRoadWork(g, traffic.made.closures)), { inputs: [heights, traffic], from: ['js/road-work.js'] });
+  const roadWork = roadWorkPart.made;
+  allColliders.push(...roadWork.colliders);
   // Tree trunks, lamp posts, signal poles and sign posts: thin and solid, so the car crashes into them and the bike
   // throws its rider (`thin`: the helicopter flies through them)
   // and each goes over when a car hits it hard enough (knockdowns.js)
@@ -283,6 +289,7 @@ async function initApp() {
   }
   // a hydrant knocked off its main gushes water (hydrant-spray.js)
   const hydrantSpray = createHydrantSpray(scene);
+  const skidEffects = createSkidEffects(scene);
   const gushList = [];
   const knockdowns = createKnockdowns({
     onFall: (it, speed) => {
@@ -292,7 +299,7 @@ async function initApp() {
     onLand: (it, spin) => audioSystem?.cue(it.kind === 'tree' ? 'thud' : 'crash',
       { x: it.x + it.dx * it.height * 0.6, y: it.g, z: it.z + it.dz * it.height * 0.6 }, Math.min(1, 0.4 + spin * 0.2))
   });
-  const parts = [grid, cascadesPart, riverPeoplePart, outskirtsPart, landmarks, blocks, details, traffic, highway, roadPaint, controlsPart, signsPart, railPart, parkedPart];
+  const parts = [grid, cascadesPart, riverPeoplePart, outskirtsPart, landmarks, blocks, details, traffic, highway, roadPaint, controlsPart, signsPart, railPart, parkedPart, roadWorkPart];
   for (const part of parts) {
     scene.add(part.group);
     cullAlso(part.culled);
@@ -308,7 +315,9 @@ async function initApp() {
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders);
   controllerManager.knockdowns = knockdowns;
   controllerManager.parkedCars = parkedCars;
-  const isOwnLook = (look) => look.kind === 'forester' && look.hex === 0x16181b;
+  controllerManager.railways = railways;
+  // the maize sports car, or the black Forester it was before (an older save's own car)
+  const isOwnLook = (look) => (look.kind === 'sports' && look.hex === 0xffcb05) || (look.kind === 'forester' && look.hex === 0x16181b);
   // The cars taken from parking spots and left in them in earlier plays (a part kept over a change has them still)
   if (!parkedCars.history.length) {
     const added = parkedCars.replay(load('parkedSwaps'));
@@ -384,6 +393,11 @@ async function initApp() {
   const audioSystem = new CityAudioSystem({ controllerManager, trafficSystem, highwayTraffic, streetDetails }, {
     onStateChange: updateSoundButton
   });
+  // a cone, drum or barricade the player runs into: a knock, a bang (road-work.js)
+  roadWork.onHit = (it, speed, who) => {
+    audioSystem.cue(it.kind === 'cone' ? 'thud' : 'crash', { x: it.x, y: it.g, z: it.z }, Math.min(1, (it.kind === 'cone' ? 0.25 : 0.4) + speed * 0.02));
+    if (who === 'player' && speed > 8 && it.kind !== 'cone') log(`[road work] hit a ${it.kind} at ${Math.round(speed * 2.237)} mph`);
+  };
   function updateSoundButton() {
     if (!soundButton) return;
     soundButton.disabled = !audioSystem.supported;
@@ -408,6 +422,7 @@ async function initApp() {
     audioSystem.cue('thud', at, Math.min(1, 0.5 + speed / 20));
     rumble(0, Math.min(1, 0.5 + speed / 20), Math.min(1, 0.4 + speed / 25), 0.35);
     if (type === 'cyclist') controllerManager.throwRider(speed, vx, vz);
+    else if (type === 'motorbike') controllerManager.throwMotoRider(speed, vx * 0.6, vz * 0.6);
     else controllerManager.knockDown(vx * 1.1, 1.5 + speed * 0.2, vz * 1.1, 0, 0.6);
     log(`Hit by a car at ${speed.toFixed(1)} m/s`);
   });
@@ -464,7 +479,7 @@ async function initApp() {
   // 5. TSL RenderPipeline with Half-Res Screen Space Reflections (SSRNode), Bloom & Filmic Toning
   //    Fade out distant and matte surfaces so SSR spends its rays on visible glossy reflections.
   await showLoadingStage('Setting up visual effects, map and interface...');
-  let renderPipeline, scenePass, colorGrade, sceneMRT = null;
+  let renderPipeline, scenePass, colorGrade, ssrPass = null, sceneMRT = null;
   if (!QUALITY.reflections) {
     scenePass = pass(scene, cameraSystem.camera);
     colorGrade = createPostProcessing(renderer, scenePass.getTextureNode('output'), vec3(0), { bloom: QUALITY.bloom });
@@ -491,7 +506,7 @@ async function initApp() {
   const scenePassNormal = scenePass.getTextureNode('normal');
   const scenePassMetalRough = scenePass.getTextureNode('metalRough');
 
-  const ssrPass = ssr(scenePassColor, scenePassDepth, scenePassNormal, {
+  ssrPass = ssr(scenePassColor, scenePassDepth, scenePassNormal, {
     metalnessNode: scenePassMetalRough.r,
     roughnessNode: scenePassMetalRough.g,
     camera: cameraSystem.camera
@@ -550,7 +565,8 @@ async function initApp() {
     person: [{ keys: ['KeyW', 'KeyS'], does: 'Walk / Run' }, { keys: ['KeyA', 'KeyD'], does: 'Turn' },
       { pad: [STICK.LEFT], does: 'Walk / Run & turn' }, { keys: ['Space'], pad: [BUTTON.A], does: 'Jump' }, orbit],
     car: [{ keys: ['KeyW', 'KeyS'], pad: [TRIGGER.RT, TRIGGER.LT], does: 'Drive / Reverse' },
-      { keys: ['KeyA', 'KeyD'], pad: [STICK.LEFT], does: 'Steer' }, { keys: ['KeyB'], does: 'Horn' }, orbit],
+      { keys: ['KeyA', 'KeyD'], pad: [STICK.LEFT], does: 'Steer' }, { keys: ['Space'], pad: [BUTTON.A], does: 'Handbrake' },
+      { keys: ['KeyB'], does: 'Horn' }, { pad: [STICK.RIGHT], does: 'Orbit' }],
     cyclist: [{ keys: ['KeyW', 'KeyS'], pad: [TRIGGER.RT, TRIGGER.LT], does: 'Pedal / Brake' },
       { keys: ['KeyA', 'KeyD'], pad: [STICK.LEFT], does: 'Lean & Turn' }, orbit],
     helicopter: [{ keys: ['KeyW', 'KeyS'], does: 'Pitch' }, { keys: ['KeyA', 'KeyD'], does: 'Yaw' },
@@ -1137,6 +1153,7 @@ async function initApp() {
     knockdowns.update(dt);
     hydrantSpray.update(dt, cameraSystem.camera);
     audioSystem?.gush?.(hydrantSpray.gushes(gushList));
+    skidEffects.update(dt, controllerManager.entities.car, controllerManager.activeMode === 'car', cameraSystem.camera);
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
     gamepadControls.supply(f.pads[0]);
@@ -1160,6 +1177,7 @@ async function initApp() {
     mark('highway');
     railways.update(dt, (at) => audioSystem.trainHorn(at));
     parkedCars.update(cameraSystem.camera);
+    roadWork.update(dt, controllerManager.getActiveEntity(), controllerManager.activeMode, trafficSystem.cars, trafficSystem.buses);
     riverPeoplePart.made.update(dt, elapsed, cameraSystem.currentPos);
     mark('trains & parked');
     const kayak = controllerManager.entities.kayak;
@@ -1309,7 +1327,7 @@ async function initApp() {
   // sharp: drawing smaller never made frames faster here (the log showed it undone every time), it only blurred the city
   game({ renderer, init() { const was = pendingRestore(); if (was) startFrom(was); }, frame, touch: false, keyboard: false, snapshot, sharp: true,
     // What this run made that no part keeps goes with it: the map and the camera system are made afresh by the next.
-    dispose() { cameraSystem.release(); mapSystem.release(); } });
+    dispose() { cameraSystem.release(); mapSystem.release(); renderPipeline.dispose(); colorGrade.dispose(); ssrPass?.dispose(); scenePass.dispose(); } });
   container.appendChild(renderer.domElement);
 }
 

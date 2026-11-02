@@ -112,10 +112,10 @@ function buildRoadPaint(scene, network, sharedBuilder = null) {
 
   // Edges run between stop lines; s is measured from the start one and o to the right of the centre line
   const at = (e, s, o) => [e.sx + e.dx * s + e.rx * o, e.sz + e.dz * s + e.rz * o];
-  const along = (e, o, w, col, period = 1, duty = 1) => {
+  const along = (e, o, w, col, period = 1, duty = 1, kind = null) => {
     const start = (e.sx - e.x0) * e.dx + (e.sz - e.z0) * e.dz;
     const ends = [at(e, e.from.shape ? -start : 0.9, o), at(e, e.to.shape ? e.span - start : e.len - 0.9, o)];
-    lines.push({ e, o, w, col, period, duty, ends, joins: [] });
+    lines.push({ e, o, w, col, period, duty, ends, joins: [], kind });
   };
   const across = (e, s, o0, o1, w, col, period, duty) => strip(...at(e, s, o0), ...at(e, s, o1), w, col, period, duty);
   const clearCentre = (e, o) => {
@@ -166,7 +166,6 @@ function buildRoadPaint(scene, network, sharedBuilder = null) {
     if (roads.has(key)) roads.get(key).push(e);
     else roads.set(key, [e]);
   }
-
   for (const [e, back] of roads.values()) {
     const firstLine = lines.length;
     // Lanes of both directions, measured to the right of e, left to right
@@ -184,8 +183,8 @@ function buildRoadPaint(scene, network, sharedBuilder = null) {
       const mid = (p.o + q.o) / 2;
       if (p.dir !== q.dir && e.turn && q.o - p.o > 4.5 && q.o - p.o < 9 && clearCentre(e, mid)) {
         for (const sgn of [-1, 1]) {
-          along(e, mid + sgn * 1.65, 0.12, YELLOW);
-          along(e, mid + sgn * 1.4, 0.12, YELLOW, 6, 0.5);
+          along(e, mid + sgn * 1.65, 0.12, YELLOW, 1, 1, { turn: sgn });
+          along(e, mid + sgn * 1.4, 0.12, YELLOW, 6, 0.5, { turn: sgn, dashed: true });
         }
         continue;
       }
@@ -193,8 +192,8 @@ function buildRoadPaint(scene, network, sharedBuilder = null) {
       if (p.dir === q.dir) {
         if (e.cls !== 6) along(e, mid, 0.13, WHITE, 12, 0.25);
       } else if (lined) {
-        along(e, mid - 0.12, 0.11, YELLOW);
-        along(e, mid + 0.12, 0.11, YELLOW);
+        along(e, mid - 0.12, 0.11, YELLOW, 1, 1, { centre: -1 });
+        along(e, mid + 0.12, 0.11, YELLOW, 1, 1, { centre: 1 });
       }
     }
 
@@ -302,6 +301,30 @@ function buildRoadPaint(scene, network, sharedBuilder = null) {
     for (const end of [0, 1]) {
       if (!line.joins[end]) line.ends[end] = at(line.e, end ? line.e.len - 0.9 : 0.9, line.o);
     }
+  }
+  // Lamp: where a centre turn lane ends at a bend and the street goes on with a plain double yellow, the turn lane's
+  // solid edges taper in to meet the double yellow (its dashed ones stop where the taper starts), rather than both
+  // stopping short with a gap and the double yellow starting between them
+  for (const roadsAtBend of bends.values()) {
+    if (roadsAtBend.length !== 2) continue;
+    for (const [A, B] of [roadsAtBend, [...roadsAtBend].reverse()]) {
+      const sign = A.end === B.end ? -1 : 1;
+      if ((A.e.dx * B.e.dx + A.e.dz * B.e.dz) * sign < 0.5) continue;
+      const turnLines = A.lines.filter((l) => l.kind?.turn && !l.joins[A.end]);
+      const centre = B.lines.filter((l) => l.kind?.centre && !l.joins[B.end]);
+      if (!turnLines.length || centre.length !== 2) continue;
+      const T = Math.min(18, A.e.len * 0.4);
+      const sT = A.end ? A.e.len - 0.9 - T : 0.9 + T;
+      for (const l of turnLines) {
+        l.ends[A.end] = at(l.e, sT, l.o);
+        if (l.kind.dashed) continue;
+        // the double yellow line on the same side, in A's frame
+        const q = centre.reduce((m, c) => ((c.o - m.o) * sign * l.kind.turn > 0 ? c : m));
+        strip(...l.ends[A.end], ...q.ends[B.end], l.w, l.col);
+      }
+    }
+  }
+  for (const line of lines) {
     line.len = Math.hypot(line.ends[1][0] - line.ends[0][0], line.ends[1][1] - line.ends[0][1]);
   }
   for (const root of lines) {

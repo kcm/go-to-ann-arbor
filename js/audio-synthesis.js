@@ -269,7 +269,8 @@ export function createSynthResources(context) {
     combustion: {
       sedan: combustionBuffers(context, 4, false, 0x73656461),
       suv: combustionBuffers(context, 6, false, 0x73757631),
-      bus: combustionBuffers(context, 6, true, 0x64696573)
+      bus: combustionBuffers(context, 6, true, 0x64696573),
+      moto: combustionBuffers(context, 2, false, 0x6d6f746f)
     },
     rotor: helicopter.rotor,
     rotorEnvelope: helicopter.envelope,
@@ -298,7 +299,7 @@ function smoothParameter(parameter, timeConstant = 0.07, epsilon = 0.0001, snapI
 }
 
 export function createMotorVoice(context, resources, kind, output) {
-  if (!['sedan', 'suv', 'bus', 'helicopter', 'cyclist', 'siren'].includes(kind)) {
+  if (!['sedan', 'suv', 'moto', 'bus', 'helicopter', 'cyclist', 'siren'].includes(kind)) {
     throw new RangeError(`Unknown motor voice: ${kind}`);
   }
   const nodes = [];
@@ -342,12 +343,12 @@ export function createMotorVoice(context, resources, kind, output) {
   mix.connect(output);
   let render;
 
-  if (kind === 'sedan' || kind === 'suv' || kind === 'bus') {
+  if (kind === 'sedan' || kind === 'suv' || kind === 'moto' || kind === 'bus') {
     const bus = kind === 'bus';
     const suv = kind === 'suv';
     const sound = resources.combustion[kind];
     const bankRatio = sound.highExhaust.duration / sound.exhaust.duration;
-    const idle = bus ? 620 : suv ? 710 : 780;
+    const idle = bus ? 620 : suv ? 710 : kind === 'moto' ? 1050 : 780;
     const ratios = bus ? [320, 205, 145, 108, 82] : [500, 325, 230, 170, 130];
     let gear = 0, rpm = idle, throttle = 0, previousTime = -1, gearLock = 0, shiftUntil = 0;
     const exhaust = loop(sound.exhaust);

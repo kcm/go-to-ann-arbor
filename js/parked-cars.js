@@ -99,10 +99,15 @@ function streetCars(out) {
   }
 }
 
-function buildParkedCars(group) {
-  const spots = [];
+function buildParkedCars(group, nearTrack = null) {
+  let spots = [];
   lotCars(spots);
   streetCars(spots);
+  // none parked across a railroad track (its middle and both ends of the car kept 3 m clear of the rails' middle)
+  if (nearTrack) spots = spots.filter((s) => {
+    const sn = Math.sin(s.yaw), cs = Math.cos(s.yaw);
+    return ![0, 2.2, -2.2].some((d) => nearTrack(s.x + sn * d, s.z + cs * d, 3.2));
+  });
   const colliders = [];
   const byKind = {};
   // One parked car: where it stands, how it's tilted on the ground and the box it is to the player

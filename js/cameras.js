@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { groundHeight, stadiumGround } from './terrain.js';
-import { hot } from '../lamp-game.js';
+import { hot, log } from '../lamp-game.js';
 
 // Lamp: the camera systems made, kept through a change of this file (lamp-game.js, "Changes while it's played"), so a
 // changed preset is put on the camera in use at once (the end of this file).
@@ -8,6 +8,8 @@ const live = hot(import.meta);
 const systems = (live.data.systems ??= new Set());
 
 // Lamp: scenic views placed at street level, which stand on the ground where they are
+const clamp01 = (t) => Math.max(0, Math.min(1, t));
+
 const STREET_VIEWS = new Set(['diag', 'mainStreet', 'stateLiberty', 'burtonTower', 'burtonTop', 'bigHouse', 'arbRiver']);
 
 // Chase, action, cockpit, fixed-location and aerial cameras, with mouse/touch orbit and zoom.
@@ -174,6 +176,82 @@ class CameraSystem {
     this.setCameraPreset('chase', true);
   }
 
+  // A real jump in the car cuts to a camera set down low beside where it will come down, which turns to follow it
+  // through the air and holds a moment after it lands, then the chase or action view glides back. Only from those two
+  // views, and only once the car has been up long enough that it isn't a curb or a bump.
+  updateJumpCam(entity, dt) {
+    const followView = this.activePresetId === 'chase' || this.activePresetId === 'action';
+    let jc = this.jumpCam;
+    if (jc && (entity !== jc.entity || !followView)) return this.endJumpCam(), false;
+    if (!jc) {
+      if (entity.type !== 'car' || !entity.airborne) { this._jumpLooked = false; return false; }
+      if (!followView || this._jumpLooked || (entity.flightTime || 0) < 0.3) return false;
+      this._jumpLooked = true;
+      // the ground a car lands on there (the stadium's stands and field included)
+      const surface = (x, z) => this.controllerManager.getGroundHeight?.(x, z, 'car') ?? groundHeight(x, z);
+      const p = entity.position, vy = entity.vy || 0;
+      const h = Math.max(0, p.y - surface(p.x, p.z));
+      const tLeft = (vy + Math.sqrt(vy * vy + 19.6 * h)) / 9.8;
+      const sn = Math.sin(entity.heading), cs = Math.cos(entity.heading);
+      const vx = sn * entity.speed + (entity.vx || 0), vz = cs * entity.speed + (entity.vz || 0);
+      // only the big ones: well over a second still to fly
+      if (tLeft < 1.1 || Math.hypot(vx, vz) < 8) return false;
+      // beside the arc, a little past its middle, on whichever side has open ground
+      const ax = p.x + vx * tLeft * 0.62, az = p.z + vz * tLeft * 0.62;
+      const hv = Math.hypot(vx, vz), sx = vz / hv, sz = -vx / hv;
+      const side = Math.min(16, 8 + hv * 0.25);
+      // what stands in the way: a building the camera would be inside, or a pole, tree or sign between it and the arc
+      const blocked = (x, z) => {
+        let n = 0;
+        for (const k of this.controllerManager.nearColliders(x, z, side)) {
+          if (!k.thin) {
+            if (x > k.minX && x < k.maxX && z > k.minZ && z < k.maxZ) n += 10;
+            continue;
+          }
+          const kx = (k.minX + k.maxX) / 2, kz = (k.minZ + k.maxZ) / 2;
+          const t = clamp01(((kx - x) * (ax - x) + (kz - z) * (az - z)) / (side * side));
+          if (Math.hypot(x + (ax - x) * t - kx, z + (az - z) * t - kz) < 1.6) n++;
+        }
+        return n;
+      };
+      // either side, near or a little farther back, whichever sees the arc clearest
+      let best = null;
+      for (const s of [1, -1]) {
+        for (const back of [0, 0.35, -0.3]) {
+          const x = ax + sx * side * s - (vx / hv) * side * back, z = az + sz * side * s - (vz / hv) * side * back;
+          const n = blocked(x, z) + Math.abs(back) * 0.5;
+          if (!best || n < best.n) best = { x, z, n };
+        }
+      }
+      const cx = best.x, cz = best.z;
+      // never below the arc's lower end (the take-off or where it lands), so a bowl or a dip doesn't hide it
+      const landY = surface(p.x + vx * tLeft, p.z + vz * tLeft);
+      const camY = Math.max(surface(cx, cz) + (best.n >= 1 ? 3.2 : 1.1), Math.min(p.y, landY) + 1.4);
+      jc = this.jumpCam = { entity, after: 0, pos: new THREE.Vector3(cx, camY, cz) };
+      this.currentPos.copy(jc.pos);
+      this.currentLookAt.set(p.x, p.y + 0.6, p.z);
+      this.camera.fov = 40;
+      this.camera.updateProjectionMatrix();
+      log(`[jump cam] cut to the side for about ${tLeft.toFixed(1)} s in the air`);
+    }
+    if (!entity.airborne) jc.after += dt;
+    if (jc.after > 0.8) return this.endJumpCam(), false;
+    // the camera stays put and pans with the car, a little lazily so it feels hand-held
+    const p = entity.position;
+    this.currentPos.copy(jc.pos);
+    this._desiredLook.set(p.x, p.y + 0.6, p.z);
+    this.currentLookAt.lerp(this._desiredLook, 1 - Math.exp(-dt * 9));
+    this.camera.position.copy(this.currentPos);
+    this.camera.lookAt(this.currentLookAt);
+    return true;
+  }
+
+  endJumpCam() {
+    this.jumpCam = null;
+    this.followEntity = null; // the follow view re-anchors from the jump camera and glides back
+    this.setCameraPreset(this.activePresetId);
+  }
+
   getActivePreset() {
     return CAMERA_PRESETS.find((p) => p.id === this.activePresetId) || CAMERA_PRESETS[0];
   }
@@ -203,6 +281,8 @@ class CameraSystem {
     const speedLag = this.smoothedSpeed * 0.1;
 
     const totalYaw = entity.heading + this.orbitYawOffset;
+
+    if (this.updateJumpCam(entity, dt)) return;
 
     switch (this.activePresetId) {
       case 'chase': {

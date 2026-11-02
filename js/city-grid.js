@@ -1775,7 +1775,7 @@ function buildCityGrid(scene) {
   }
   // Driveways, front walks and patios: the city's paved surfaces on each lot, in pale concrete or asphalt
   // (GEO.driveways from build-annarbor.py, joined to the curb across the tree lawn and sidewalk)
-  const concreteGeos = [], blacktopGeos = [];
+  const concreteGeos = [], blacktopGeos = [], plazaGeos = [];
   for (const rings of GEO.driveways || []) {
     const r = rings.map(toRing);
     // big paved yards (lots the map doesn't call parking, school and church yards) are asphalt
@@ -1801,6 +1801,9 @@ function buildCityGrid(scene) {
     const asphalt = big ? wide && !web || (!web && hashDrive(r[0][0].x, r[0][0].z) < 0.25)
       : !apron && hashDrive(r[0][0].x, r[0][0].z) < 0.25;
     const dg = flatGeo(r, LAWN_Y + 0.008);
+    // Lamp: a vast web of walks (the plazas around Michigan Stadium, its gates and concourses) in one flat pale gray
+    // read as a blank slab: it's laid in granite pavers, jointed and weathered, like the city's plazas
+    if (web && Math.abs(area) / 2 > 5000) { plazaGeos.push(setPavingStyle(dg, 1)); continue; }
     (asphalt ? blacktopGeos : concreteGeos).push(dg);
   }
   // Curb cuts: where a driveway meets the street, a concrete ramp flaring down over the curb to the gutter
@@ -1839,6 +1842,11 @@ function buildCityGrid(scene) {
   }
   if (concreteGeos.length) mergeInto(concreteGeos, drivewayConcreteMat);
   if (blacktopGeos.length) mergeInto(blacktopGeos, drivewayBlacktopMat);
+  if (plazaGeos.length) {
+    const plazaMat = createParkPavingMaterial();
+    drawOver(plazaMat);
+    mergeInto(plazaGeos, plazaMat);
+  }
   const lotGeos = [];
   const stripeGeos = [];
   for (const rings of PARKING_LOTS) {

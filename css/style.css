@@ -764,7 +764,7 @@ body.hud-minimized .icon-show {
   flex-wrap: wrap;
   justify-content: center;
   gap: 6px 16px;
-  max-width: 600px;
+  max-width: 720px;
   font-size: 12px;
   font-weight: 500;
   color: rgba(255, 255, 255, 0.88);
