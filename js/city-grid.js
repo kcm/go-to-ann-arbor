@@ -1868,7 +1868,7 @@ function buildCityGrid(scene) {
     const species = kind === 0 ? (r < 0.45 ? 3 : r < 0.85 ? 4 : 2)
       : kind === 1 ? (r < 0.3 ? 3 : r < 0.55 ? 4 : r < 0.65 ? 0 : r < 0.72 ? 1 : r < 0.86 ? 6 : 2)
         : (r < 0.35 ? 3 : r < 0.55 ? 5 : r < 0.7 ? 6 : r < 0.82 ? 4 : r < 0.88 ? 1 : 2);
-    treeSites.push({ x, y: LAWN_Y, z, scale: (kind === 0 ? 1.0 : 0.85) + prand(x, z, 3) * 0.4, species });
+    treeSites.push({ x, y: LAWN_Y, z, scale: (kind === 0 ? 1.35 : 1.15) + prand(x, z, 3) * 0.5, species, likeStreet: true });
   }
 
   // Park playgrounds (playgrounds.js, GEO.playgrounds)
