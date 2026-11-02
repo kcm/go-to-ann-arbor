@@ -290,7 +290,7 @@ async function initApp() {
   // Cars parked in the lots and along the main streets downtown, solid to the player (parked-cars.js)
   const parkedPart = live.keep('parkedCars', () => cityPart((g) => buildParkedCars(g, railways.nearTrack)), { inputs: [heights], from: ['js/parked-cars.js', 'js/railways.js'] });
   const parkedCars = parkedPart.made;
-  allColliders.push(...parkedCars.colliders);
+  for (const c of parkedCars.colliders) allColliders.push(c);
   // streamed, the parked cars near the camera come and go, and their boxes with them (parked-cars.js)
   parkedCars.onColliders = (added, removed) => {
     if (removed.size) {
@@ -298,7 +298,7 @@ async function initApp() {
       for (const c of allColliders) if (!removed.has(c)) allColliders[n++] = c;
       allColliders.length = n;
     }
-    allColliders.push(...added);
+    for (const c of added) allColliders.push(c);
     controllerManager._colliderCells = null; // (only from the frame step, once it's made)
   };
   // Road work: the blocks traffic.js closed, barricaded, coned and dug up (road-work.js); the machines are solid

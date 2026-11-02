@@ -1419,7 +1419,7 @@ function createTreeField(_scene, sites, colliders = [], { stream = 0, at = null 
       if (chunkDistance(k, x, z) < stream + 400) continue;
       field.dispose();
       planted.delete(k);
-      removed.push(...fieldObstacles.get(field));
+      for (const o of fieldObstacles.get(field)) removed.push(o);
       fieldObstacles.delete(field);
     }
     // the nearest one not planted yet (all of them within reach as the city's built)
@@ -1431,7 +1431,7 @@ function createTreeField(_scene, sites, colliders = [], { stream = 0, at = null 
       planted.set(k, field);
       const obs = obstaclesOf(field);
       fieldObstacles.set(field, obs);
-      added.push(...obs);
+      for (const o of obs) added.push(o);
     }
     if (added.length || removed.length) onObstacles?.(added, removed);
   }

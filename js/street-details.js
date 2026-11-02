@@ -1371,7 +1371,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   // Lamp: each can be knocked over by a hard enough hit (knockdowns.js): a tree by its trunk and height, a pole with
   // every piece of it (its instances in each mesh drawn from the lists own() noted)
   // (streamed, the field hands its planted trunks to main.js as they come and go)
-  if (!TIER.stream) obstacles.push(...treeField.obstacles());
+  if (!TIER.stream) for (const o of treeField.obstacles()) obstacles.push(o);
   // A streetlight knocked over goes dark: its lamp (the head out on its arm, or the globe on top) and the pool under it
   const pm0 = new THREE.Matrix4().makeScale(0, 0, 0);
   function lightsOut(p) {
