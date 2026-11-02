@@ -19,7 +19,7 @@ the city's inventory, traffic and people; Michigan Stadium ("the Big House") mod
   stadium facing downtown, the kayak in the Argo Cascades' channel by Argo Park's dock, facing the rapids. 1 to 5 (`travelBy`) take the player there,
   unless that vehicle is within 40 m, when they just take it. The helicopter lands wherever its skids come down: the ground, Michigan Stadium's field
   and stands (it flies into the bowl; `helicopterFloor` in `controllers.js` uses `bowlSurface`), and any roof it
-  was above — a house's own pitched roofs (houses.js gives the house's collider `roofs`, each a plane set), other
+  was above: a house's own pitched roofs (houses.js gives the house's collider `roofs`, each a plane set), other
   buildings' flat tops. A roof it rests on doesn't push it sideways; one above it is still a wall.
 - **Cameras**: V (Shift-V back): chase, action, first person and scenic ones (`diag`, `mainStreet`, `stateLiberty`,
   `burtonTower`, `burtonTop`, `bigHouse`, `arbRiver` in `cameras.js`).
@@ -125,9 +125,9 @@ the city's inventory, traffic and people; Michigan Stadium ("the Big House") mod
     in IndexedDB (a database per city part, `ground-layers-<part>`), keyed by a fingerprint of the heights, river,
     bridges, the cutting code and each layer's own geometry, and read back on later starts. setOnTerrain answers a
     promise when it has layers to cut; main.js awaits it in the grid and street-details parts. Ground layers are cut at
-    4 cm (the road surface at 5 cm; the road markings sit 6 cm over it, `road-paint.js`). A layer stacked over another
-    must sit more than that above it, or the one under shows through on slopes as long wedges: the lawns (LAWN_Y 0.28)
-    are 6 cm over the sidewalk slab (SW_TOP 0.22) that fills each block under them. Driveways and front walks, a few mm over the
+    16 cm down to 5 m edges (the road markings sit 10 cm over the road surface, `road-paint.js`). A layer stacked over another
+    must sit more than that above it, or the one under shows through on slopes as long wedges: the lawns (LAWN_Y 0.34)
+    are 12 cm over the sidewalk slab (SW_TOP 0.22) that fills each block under them. Driveways and front walks, a few mm over the
     lawn, are drawn in front of it with `drawOver` (terrain.js: each vertex pulled along its line of sight, so only its
     depth changes) instead of a real lift. Driveway aprons (small, four
     corners) are always concrete, so the sidewalk never shows a blacktop patch. Pavings with holes (the walk webs of the Diag and the quads) are
@@ -303,6 +303,6 @@ module holds at its top level is released when the code runs again: `hot(import.
 itself gathered, `release()` from the run or part that owns a system. Big tables that never change as it's played
 (the buildings, the trees) are built inside `keep`, with what they're read from in `from`, so a run reuses them.
 
-Memory (device-tier.js: full, light for a Mac with 16 GB or less, phone): the still parts of the city (main.js `still`, the streamed ground tiles, the streamed houses) keep their vertex data on the GPU only (gpu-only.js lets go of the script's copy once uploaded, sending out-of-sight pieces up after a few rounds). Where the tier streams (`TIER.stream` metres), parked cars come and go by 250 m cell (parked-cars.js, `onColliders`), trees by square kilometre (trees.js, `onObstacles`, their trunks solid through main.js), and the shop signs are painted at half size. memory-report.js logs the count once built and as spare copies go; the phone setting aims under 450 MB (about 350 MB measured in the preview). `?tier=phone` tries the phone setting.
+Memory (device-tier.js: light by default on desktop, full via `?tier=full`, phone on touch devices): the still parts of the city (main.js `still`, the streamed ground tiles, the streamed houses) keep their vertex data on the GPU only (gpu-only.js lets go of the script's copy once uploaded, sending out-of-sight pieces up after a few rounds). Where the tier streams (`TIER.stream` metres), parked cars come and go by 250 m cell (parked-cars.js, `onColliders`), trees by square kilometre (trees.js, `onObstacles`, their trunks solid through main.js), and the shop signs are painted at half size. memory-report.js logs the count once built and as spare copies go; the phone setting aims under 450 MB (about 350 MB measured in the preview). `?tier=phone` tries the phone setting.
 
 Tree sizes (trees.js): a surveyed street tree grows to its real height (only a typo past 45 m is cut down); park, wood and yard trees (`likeStreet` from city-grid.js) take a height from the taller two-thirds of the surveyed street trees of their kind.

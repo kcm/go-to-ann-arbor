@@ -269,12 +269,11 @@ class LightingSystem {
     this.sunLight = new SunLight(0xffca92, 5.8);
     this.sunLight.position.copy(TIME_PRESETS.golden.sunDir);
     this.sunLight.castShadow = true;
-    // Two cascades share an atlas: use 3072px tiles when a 6144px texture fits, otherwise 2048px tiles.
-    const maxTex = (renderer && renderer.backend && renderer.backend.device && renderer.backend.device.limits.maxTextureDimension2D) || 4096;
-    const tile = maxTex >= 6144 ? 3072 : 2048;
+    // Two cascades share an atlas: use 1536px tiles for fast shadow passes without pegging the GPU.
+    const tile = 1536;
     this.sunLight.shadow.mapSize.set(tile, tile);
     this.sunLight.shadow.camera.near = 0.5;
-    this.sunLight.shadow.camera.far = 300;
+    this.sunLight.shadow.camera.far = 200;
     // Suppress shadow acne along the surface normal in world units
     // so short casters like cars, curbs, tree trunks, and pedestrians keep crisp contact shadows
     this.sunLight.shadow.normalBias = 0.05;
@@ -378,11 +377,11 @@ class LightingSystem {
   update(focusPos) {
     // SunLightShadow automatically fits & texel-snaps its 2 cascades to the view camera frustum
     // every frame inside SunShadowNode.renderShadow(), splitting [near, far] halfway between a uniform and a
-    // logarithmic split (the near cascade ends at ~far / 4). Keep far at 300 m at street level so the near cascade
-    // stays sharp, and expand it with altitude (helicopter / observatory) so shadows reach all the way down to street level.
+    // logarithmic split (the near cascade ends at ~far / 4). Keep far at 200 m at street level so the near cascade
+    // stays sharp with 1536px tiles, and expand it with altitude (helicopter / observatory) so shadows reach down to street level.
     // Lamp: altitude above the ground under the camera (terrain.js)
     const altitude = focusPos && Number.isFinite(focusPos.y) ? Math.max(0, focusPos.y - groundHeight(focusPos.x, focusPos.z)) : 0;
-    this.sunLight.shadow.camera.far = Math.max(300, Math.min(720, 260 + altitude * 1.6));
+    this.sunLight.shadow.camera.far = Math.max(200, Math.min(560, 180 + altitude * 1.5));
   }
 }
 

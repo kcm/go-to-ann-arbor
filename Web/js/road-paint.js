@@ -14,9 +14,9 @@ const WHITE = new THREE.Color(0xe6e2d6);
 const YELLOW = new THREE.Color(0xe8ad22);
 const GREEN = new THREE.Color(0x2a8a4e);
 const STEP = 6; // Lamp: metres between a strip's vertices along it, so it follows the ground
-const HEIGHT = 0.06; // above the asphalt (Lamp: clear of it where the two follow the ground by different cuts, terrain.js)
-const PAINT_CELL_SIZE = 1200;
-const PAINT_CULL_DISTANCE = 1650;
+const HEIGHT = 0.10; // above the asphalt (Lamp: clear of it where the two follow the ground by different cuts, terrain.js)
+const PAINT_CELL_SIZE = 900;
+const PAINT_CULL_DISTANCE = 1150;
 const WIDEN_SPHERE_PAD = 16; // createRoadPaintMaterial widens thin distant strips up to 16x in screen space
 
 // Spatial chunk builder shared by the town's street markings and perimeter highway markings (js/city-grid.js), so

@@ -406,7 +406,7 @@ function groundHeightNode(worldXZ) {
 // can follow it: a triangle is split (at the middle of its longest edge) while the ground under its edges' middles,
 // quarters and centre strays more than `tolerance` metres from the plane through its corners, down to edges of
 // `minEdge`. Flat ground (the water's edge, level streets) isn't cut at all. Every attribute is interpolated.
-function tessellate(geometry, tolerance = 0.02, minEdge = 2) {
+function tessellate(geometry, tolerance = 0.12, minEdge = 5) {
   const g = geometry.index ? geometry.toNonIndexed() : geometry;
   const names = Object.keys(g.attributes).filter((n) => !g.attributes[n].isInterleavedBufferAttribute);
   const sources = names.map((n) => g.attributes[n]);
@@ -493,7 +493,7 @@ function tessellate(geometry, tolerance = 0.02, minEdge = 2) {
 
 // Every vertex of a world-space geometry raised by the ground under it, cut finer first (tessellate) unless
 // `tolerance` is 0 (lines and points, which can't be cut).
-function drapeGeometry(geometry, tolerance = 0.02) {
+function drapeGeometry(geometry, tolerance = 0.12) {
   if (!grid) return geometry;
   const g = tolerance ? tessellate(geometry, tolerance) : geometry;
   const pos = g.attributes.position;
@@ -975,7 +975,7 @@ async function buildTiles(list) {
 
 // Every frame: the tiles the player has come near are drawn (a few at a time, one batch in hand), and those left more
 // than 400 m beyond the radius let go. Answers whether any were drawn or let go.
-const AWAY = 400, BATCH = 6;
+const AWAY = 300, BATCH = 6;
 function updateGroundStreaming(x, z) {
   if (!stream.radius || !stream.layers.length) return false;
   stream.x = x; stream.z = z;
@@ -1028,7 +1028,7 @@ const isIdentity = (m) => m.elements.every((v, i) => Math.abs(v - IDENTITY.eleme
 // marked userData.terrain = 'set' was put on the ground where it was built and is left alone, children included.
 // The cutting is the slow part of a start: it's done on several cores and saved, so a later start with the same city
 // reads it back (drapeLayers). Answers a promise when there's cutting to wait for, else nothing.
-function setOnTerrain(root, tolerance = 0.04) {
+function setOnTerrain(root, tolerance = 0.16) {
   if (!grid || !root) return null;
   root.updateMatrixWorld(true);
   const replace = [], jobs = [];

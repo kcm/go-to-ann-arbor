@@ -14,13 +14,14 @@ import { hot } from '../lamp-game.js';
 // 3. Splits the remaining large batches into cells for view-frustum culling, keeping their full draw distance.
 
 const SHADOW_PROXY_LAYER = 3;
-// Distance at which an instance of typical size s (m) is culled: about s / d * 1100 px tall on a 1300 px viewport
-const CULL_PER_METRE = 1100;
-// never closer: the shadow cascades reach ~300 m at street level (on a phone, without them, the far props go sooner)
-const CULL_MIN = 300 * TIER.farCut;
-const CULL_MAX = 2000; // beyond this the props are kept at any distance
+// Distance at which an instance of typical size s (m) is culled: about s / d * 700 px tall on a 1300 px viewport
+const CULL_PER_METRE = 700;
+// never closer: the shadow cascades reach ~200 m at street level (on a phone, without them, the far props go sooner)
+const CULL_MIN = 220 * TIER.farCut;
+const CULL_MAX = 1400; // beyond this the props are kept at any distance
 const PROXY_CELL = 500; // the far cascade spans ~400 m at street level: a cascade sees a few cells
-const STATIC_CELL = 1000;
+const STATIC_CELL = 600;
+const STATIC_FAR_CULL = 2000 * TIER.farCut;
 
 const _m = new THREE.Matrix4();
 const _wm = new THREE.Matrix4();
@@ -344,9 +345,14 @@ function setupSceneCulling(scene, roots, shadow = null) {
   }
 
   // Preserve the shadow stand-ins above before splitting their visible geometry.
-  // These large objects stay visible at any distance and need no per-frame distance checks.
+  // Split large static objects into 600 m cells and cull cells beyond STATIC_FAR_CULL.
   for (const mesh of largeMeshes) {
-    if (!mesh.castShadow) replaceWithChunks(mesh, STATIC_CELL);
+    if (!mesh.castShadow) {
+      for (const chunk of replaceWithChunks(mesh, STATIC_CELL)) {
+        const sphere = chunk.boundingSphere.clone().applyMatrix4(chunk.matrixWorld);
+        pushCulled(chunk, sphere, STATIC_FAR_CULL);
+      }
+    }
   }
 
   state.culled.push(...culled);
