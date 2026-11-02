@@ -17,6 +17,7 @@ const TIERS = {
 // A phone or a tablet: an iPad says it's a Mac, but has a touch screen
 export const TOUCH_DEVICE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
   || (/Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1);
+export const FIREFOX = /Firefox\//i.test(navigator.userAgent);
 
 // The tier in use, chosen as this module loads (before anything that imports it builds the city): read by everything
 // that builds it, at the top of its module too
@@ -33,7 +34,11 @@ async function chooseTier() {
   const asked = new URLSearchParams(location.search).get('tier');
   if (TIERS[asked]) name = asked;
   Object.assign(TIER, TIERS[name]);
-  log(`[tier] ${name}${memory ? ` (${Math.round(memory)} GB)` : ''}${TOUCH_DEVICE ? ', a touch device' : ''}`);
+  // Firefox's macOS WebGL2 backend stalls heavily on 4x MSAA RGBA16F offscreen blits + 11-pass HDR bloom
+  if (FIREFOX && !asked) {
+    Object.assign(TIER, { bloom: false, antialias: false, scale: Math.min(TIER.scale, 0.75), farCut: Math.min(TIER.farCut, 0.65) });
+  }
+  log(`[tier] ${name}${memory ? ` (${Math.round(memory)} GB)` : ''}${TOUCH_DEVICE ? ', a touch device' : ''}${FIREFOX ? ', firefox' : ''}`);
   return TIER;
 }
 await chooseTier();

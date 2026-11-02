@@ -164,7 +164,7 @@ const boxCoverage = Fn(([x, a, b, s]) => {
   return clamp(min(xv.add(sv), b).sub(max(xv.sub(sv), a)).div(sv.mul(2.0)), 0.0, 1.0);
 });
 
-// Keep distant lit windows in 1–2 pixel clusters. Adjacent world-anchored scales cross-fade, and
+// Keep distant lit windows in 1-2 pixel clusters. Adjacent world-anchored scales cross-fade, and
 // the half-width inset leaves room for filtering at cell edges while preserving mean brightness.
 const distantWindowLight = Fn(([grid, fw, probability, seed, lod]) => {
   const light = float(probability).toVar();
@@ -2343,7 +2343,7 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillStyle = '#ffdf78';
     ctx.font = '800 18px Inter, Arial, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('★  BROADWAY MUSICAL SPECTACULAR  ★', 256, 46);
+    ctx.fillText('*  BROADWAY MUSICAL SPECTACULAR  *', 256, 46);
 
     ctx.fillStyle = '#ffffff';
     ctx.font = '900 44px Inter, Arial, sans-serif';
@@ -2361,7 +2361,7 @@ function createBillboardCanvasTexture(themeKey) {
 
     ctx.fillStyle = '#fff3c4';
     ctx.font = '800 20px Inter, Arial, sans-serif';
-    ctx.fillText('★★★★★  "UNFORGETTABLE!" — NY TIMES', 256, 185);
+    ctx.fillText('*****  "UNFORGETTABLE!" : NY TIMES', 256, 185);
 
     ctx.fillStyle = '#ffae42';
     ctx.font = '700 16px JetBrains Mono, monospace';
@@ -2541,7 +2541,7 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillStyle = '#ffd15c';
     ctx.textAlign = 'right';
     ctx.font = '800 22px JetBrains Mono, monospace';
-    ctx.fillText('NYC 72°F ☀', 492, 33);
+    ctx.fillText('NYC 72°F', 492, 33);
 
     // Center headline graphic
     ctx.fillStyle = '#ffffff';
@@ -3105,7 +3105,7 @@ function createWaterMaterial() {
         const sV = tHit.mul(sigma2).add(fwH).add(0.5).toVar();
         const sU = tHit.mul(sigma2).mul(max(viewDir.y, 0.05)).add(fwU).add(0.3).toVar();
 
-        // Lots 24 m wide with heights 0.3–1.3× the district skyline (averaged once a footprint spans several lots)
+        // Lots 24 m wide with heights 0.3-1.3x the district skyline (averaged once a footprint spans several lots)
         const lot = floor(u.div(24.0));
         const r1 = hash2D(vec2(lot, 5.1));
         const r2 = hash2D(vec2(lot, 9.7));
@@ -3449,6 +3449,7 @@ function createContactShadowMaterial() {
   mat.opacityNode = shadowOpacity;
   // Smoothly occlude wet-road SSR under the vehicle footprint proportional to shadow opacity (0 at quad edges)
   mat.mrtNode = mrt({
+    output: output,
     normal: vec4(0.0, 0.0, 0.0, 0.0),
     metalRough: vec4(0.0, 1.0, 0.0, shadowOpacity.mul(0.88))
   });

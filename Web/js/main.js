@@ -534,6 +534,9 @@ async function initApp() {
   let renderPipeline, scenePass, colorGrade, ssrPass = null, sceneMRT = null;
   if (!QUALITY.reflections) {
     scenePass = pass(scene, cameraSystem.camera);
+    scenePass.renderTarget.storeMultisampledColorBuffer = false;
+    scenePass.renderTarget.storeMultisampledDepthBuffer = false;
+    scenePass.renderTarget.resolveDepthBuffer = false;
     colorGrade = createPostProcessing(renderer, scenePass.getTextureNode('output'), vec3(0), { bloom: QUALITY.bloom });
     renderPipeline = new THREE.RenderPipeline(renderer, colorGrade.outputNode);
   } else {
