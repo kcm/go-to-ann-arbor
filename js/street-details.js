@@ -862,6 +862,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
   // Hydrants: each where the city mapped it, moved out of the street onto the curb's edge when the map's point is a
   // little off it, and turned with its pumper nozzle toward the nearest street
   const HY = streetFurniture?.hydrants || [];
+  const hydrantSites = []; // where each stands, in the order of its instance
   const curbSearch = [];
   for (let r = 0.75; r <= 8; r += 0.75) for (let k = 0; k < 12; k++) curbSearch.push([r, (k / 12) * Math.PI * 2]);
   const towardStreet = (x, z) => {
@@ -883,6 +884,7 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
     dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
     furnMatrices.hydrant.push(dummy.matrix.clone());
+    hydrantSites.push({ x, z });
     addFootprint(x, z, 0.4, 0.4, true);
   }
 
@@ -894,8 +896,10 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
     putFurniture(kind[0], x, z, AM[i + 3], kind[1], kind[2]);
   }
   // only the shelters cast shadows: a bench's or a hydrant's is too small to be worth its draws in every cascade
+  let hydrantMesh = null;
   for (const k of Object.keys(FURN_SHAPES)) {
     const inst = addMatrixArrayInstanced(FURN_SHAPES[k], furnMat, furnMatrices[k], k === 'shelter');
+    if (k === 'hydrant') hydrantMesh = inst;
     if (inst && k !== 'shelter') inst.receiveShadow = true;
   }
 
@@ -1403,6 +1407,8 @@ function buildStreetDetails(scene, colliders = [], streetFurniture = null) {
     for (let k = 0; k < p.parts.length; k += 2) for (const mesh of meshesOf.get(p.parts[k]) || []) parts.push(mesh, p.parts[k + 1]);
     obstacles.push({ x: p.x, z: p.z, r: Math.min(0.2, p.width * 0.4), kind: p.width >= 0.5 ? 'signal' : 'lamp', height: 8, parts, out: () => lightsOut(p) });
   }
+  // hydrants break off their flange at a bump and fly, and the water main under them gushes (knockdowns.js)
+  if (hydrantMesh) hydrantSites.forEach((h, i) => obstacles.push({ x: h.x, z: h.z, r: 0.2, kind: 'hydrant', height: 0.8, parts: [hydrantMesh, i] }));
   return { group, footprints, signalClock, signalIntersections, audioSignals, treeField, obstacles, update };
 }
 

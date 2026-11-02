@@ -31,8 +31,8 @@ import { WATER_RIPPLES, waterDisturb } from './tsl-materials.js';
 import { cascadeCurrent, cascadeDepth, onWeirRocks, pondDraw } from './cascades.js';
 import { polygonContact, polygonContains } from './building-collision.js';
 import { vehicleContact, resolveVehicleContact } from './vehicle-physics.js';
-import { bowlSurface } from './stadium-shape.js';
-import { hot, rumble } from '../lamp-game.js';
+import { STADIUM, bowlSurface, carSurface, radiiAt } from './stadium-shape.js';
+import { hot, log, rumble } from '../lamp-game.js';
 
 // Player models, animation and movement for walking, driving, cycling and flying.
 
@@ -147,8 +147,8 @@ function roofHeightAt(c, x, z) {
 }
 
 // Michigan Stadium's collider (landmarks.js), which keeps cars and people outside its wall but not the helicopter
-const isStadium = (c) => c.stadium || (c._bowl ??= !c.polygon && !c.obb
-  && bowlSurface((c.minX + c.maxX) / 2, (c.minZ + c.maxZ) / 2) !== null);
+const isStadium = (c) => !c.solid && (c.stadium || (c._bowl ??= !c.polygon && !c.obb
+  && bowlSurface((c.minX + c.maxX) / 2, (c.minZ + c.maxZ) / 2) !== null));
 
 // Movement and teleports share exact footprint checks after rejecting distant bounds.
 // Walking/cycling/flying use circles; cars use oriented rectangles.
@@ -461,6 +461,7 @@ class ThirdPersonControllerManager {
       ent.position.y = heli ? altitude : this.getGroundHeight(destination.x, destination.z, this.activeMode);
     }
     ent.speed = 0;
+    ent.airborne = false; ent.vy = 0;
     if (this.activeMode === 'person') {
       ent.verticalVel = 0;
       ent._charHidden = false;
@@ -1207,6 +1208,11 @@ class ThirdPersonControllerManager {
       return ground + (this.isPointOnSidewalk(x, z) ? TOWN_BOUNDS.sidewalkHeight : 0.0);
     }
     if (mode === 'kayak') return waterLevel(x, z) ?? ground;
+    // a car inside Michigan Stadium's wall is on its field, stands or parapet
+    if (mode === 'car') {
+      const s = carSurface(x, z);
+      if (s !== null) return stadiumGround() + s;
+    }
     return ground;
   }
 
@@ -1280,6 +1286,8 @@ class ThirdPersonControllerManager {
       const c = near[i];
       // the helicopter flies down into the stadium's bowl, and sits on the roof under its skids
       if (heli && (isStadium(c) || c.thin || standing?.has(c))) continue;
+      // a car drives in over the stadium's wall and down its stands: its steps and walls are the ground (updateCar)
+      if (carEntity && isStadium(c)) continue;
       // a parked car is a body of its own: the two trade momentum, and it's shoved along and spun (parked-cars.js)
       if (carEntity && c.parked && this.parkedCars) {
         if (c.maxY > pos.y && c.minY < pos.y + body.top) this.shoveParked(c.parked, pos, carEntity, entity, sinH, cosH);
@@ -1549,7 +1557,21 @@ class ThirdPersonControllerManager {
       e.mesh.position.copy(e.position);
       // Lamp: a car or bike tilts with the slope under its wheels (terrain.js); yaw first, then pitch and roll
       if (e.type === 'car' || e.type === 'cyclist') {
-        const [pitch, roll] = groundTilt(e.position.x, e.position.z, e.heading, e.type === 'car' ? 4.2 : 1.6, e.type === 'car' ? 1.8 : 0.4);
+        let [pitch, roll] = groundTilt(e.position.x, e.position.z, e.heading, e.type === 'car' ? 4.2 : 1.6, e.type === 'car' ? 1.8 : 0.4);
+        if (e.type === 'car') {
+          // in the air it holds the attitude it left with, the nose following its path; on the stadium's stands the
+          // slope is the stands' own (carSurface), not the dug ground's under them
+          if (e.airborne) {
+            e.airRoll *= Math.exp(-dt * 1.5);
+            pitch = e.airPitch; roll = e.airRoll;
+          } else if (carSurface(e.position.x, e.position.z) !== null) {
+            const s = Math.sin(e.heading), co = Math.cos(e.heading), g = (dx, dz) => this.getGroundHeight(e.position.x + dx, e.position.z + dz, 'car');
+            pitch = Math.atan2(g(s * 2.1, co * 2.1) - g(-s * 2.1, -co * 2.1), 4.2);
+            roll = Math.atan2(g(-co * 0.9, s * 0.9) - g(co * 0.9, -s * 0.9), 1.8);
+          }
+          e.groundPitch = e.airborne ? e.groundPitch : pitch;
+          e.groundRoll = e.airborne ? e.groundRoll : roll;
+        }
         e.mesh.rotation.set(-pitch, e.heading, e.type === 'car' ? -roll : 0, 'YXZ');
       } else {
         e.mesh.rotation.y = e.heading;
@@ -1691,15 +1713,17 @@ class ThirdPersonControllerManager {
       const vx = sin * c.speed + c.vx, vz = cos * c.speed + c.vz;
       const forward = vx * sin + vz * cos;
       const sideways = vx * cos - vz * sin;
-      const speed = driveSpeed(forward, throttle, step, D);
+      // in the air the wheels push on nothing: the car keeps its way and its spin
+      const air = c.airborne;
+      const speed = air ? forward : driveSpeed(forward, throttle, step, D);
       const acceleration = (speed - forward) / step;
       // Braking and cornering share tire grip; air resistance does not use it.
       const tireAcceleration = acceleration + D.drag * forward * Math.abs(forward);
-      const grip = Math.sqrt(Math.max(0, D.grip ** 2 - tireAcceleration ** 2));
+      const grip = air ? 0 : Math.sqrt(Math.max(0, D.grip ** 2 - tireAcceleration ** 2));
       // A handbrake slide preserves steering while reducing lateral grip; fade it out at low speed.
       const handbrake = forward * throttle < 0 ? Math.abs(throttle) * Math.min(1, Math.abs(forward) / 5) : 0;
       const lateralGrip = grip * (1 - 0.7 * handbrake);
-      const steeringGrip = grip + (D.grip - grip) * handbrake;
+      const steeringGrip = air ? 0 : grip + (D.grip - grip) * handbrake;
 
       // Full lock at parking speeds, progressively less steering at road speeds.
       const turn = D.wheelbase * D.cornering;
@@ -1735,7 +1759,7 @@ class ThirdPersonControllerManager {
       c.heaveVel += (-c.heaveY * 85 - c.heaveVel * 12) * step;
       c.heaveY = Math.max(-0.08, Math.min(0.14, c.heaveY + c.heaveVel * step));
     }
-    c.position.y = this.getGroundHeight(c.position.x, c.position.z, 'car');
+    this.carVertical(c, dt, prevX, prevZ);
     c.chassisPivot.position.y = c.heaveY;
 
     if (c.carState) {
@@ -1753,6 +1777,80 @@ class ThirdPersonControllerManager {
         w.steerPivot.rotation.y = c.steerAngle;
       }
     }
+  }
+
+  // The car's height: on its wheels it follows the ground, but over a crest faster than gravity can pull it down
+  // (the top of the stadium's stands, a hilltop, the stadium's wall) it leaves it and flies, pitching with its path,
+  // until it comes down hard on the suspension. In the stadium a step taller than the car can take at its speed (the
+  // field's wall, the parapet from inside) stops it like a wall.
+  carVertical(c, dt, prevX, prevZ) {
+    const x = c.position.x, z = c.position.z, prevY = c.position.y;
+    let ground = this.getGroundHeight(x, z, 'car');
+    const sx = x - STADIUM.cx, sz = z - STADIUM.cz;
+    const r = Math.hypot(sx, sz);
+    if (r < 160) {
+      const climb = 0.45 + 0.055 * Math.abs(c.speed);
+      if (ground > prevY + climb && (prevX !== x || prevZ !== z)) {
+        // back to where it was, bounced off the step's face (it runs round the stadium, so its normal is radial)
+        c.position.x = prevX; c.position.z = prevZ;
+        const [rIn] = radiiAt(Math.atan2(sz, sx));
+        const out = r < rIn + 1 ? -1 : 1; // the field's wall faces in, the rest of the steps face the field
+        const nx = (sx / (r || 1)) * -out, nz = (sz / (r || 1)) * -out;
+        const sin = Math.sin(c.heading), cos = Math.cos(c.heading);
+        const hit = carWallImpulse(c, sin, cos, prevX, prevZ, nx, nz, c.drive?.mass || 1500);
+        if (hit.closing > 0.5) this.carImpactKick(c, sin, cos, nx, nz, hit.dv);
+        this.reportCollision(c, null, 'building', prevX - nx * 2, prevY + 0.5, prevZ - nz * 2, nx, 0, nz, hit.closing);
+        ground = this.getGroundHeight(prevX, prevZ, 'car');
+      }
+    }
+    c.vy ??= 0;
+    const hv = Math.hypot(Math.sin(c.heading) * c.speed + (c.vx || 0), Math.cos(c.heading) * c.speed + (c.vz || 0));
+    if (c.airborne) {
+      c.vy -= 9.8 * dt;
+      c.position.y = prevY + c.vy * dt;
+      c.flightTime = (c.flightTime || 0) + dt;
+      // nose follows the way it's going, a little behind
+      c.airPitch += (Math.atan2(c.vy, Math.max(6, hv)) * Math.sign(c.speed || 1) - c.airPitch) * Math.min(1, dt * 2.5);
+      if (c.position.y <= ground) {
+        const impact = -c.vy;
+        c.position.y = ground;
+        c.airborne = false;
+        c.vy = 0;
+        if (impact > 2) {
+          c.heaveVel = (c.heaveVel || 0) - Math.min(4, impact * 0.35);
+          c.pitchVel = (c.pitchVel || 0) + Math.min(3, impact * 0.18);
+          // a hard landing scrubs speed
+          const keep = Math.max(0.7, 1 - impact * 0.012);
+          c.speed *= keep;
+          this.reportCollision(c, null, 'building', x, ground + 0.2, z, 0, 1, 0, impact * 0.8);
+          rumble(0, Math.min(1, impact * 0.08), Math.min(1, impact * 0.05), 0.25);
+          if (c.flightTime > 0.4) log(`[jump] ${c.flightTime.toFixed(1)} s in the air, landed at ${impact.toFixed(1)} m/s`);
+        }
+        c.flightTime = 0;
+      }
+      return;
+    }
+    // on the ground: rising or falling as fast as the slope under it carries it
+    const back = 2, ux = (x - prevX), uz = (z - prevZ), ul = Math.hypot(ux, uz);
+    let slopeVy = 0;
+    if (ul > 1e-4) {
+      const behind = this.getGroundHeight(x - (ux / ul) * back, z - (uz / ul) * back, 'car');
+      slopeVy = Math.max(-0.45, Math.min(0.45, (ground - behind) / back)) * (ul / dt);
+    }
+    const ballistic = prevY + c.vy * dt - 4.9 * dt * dt;
+    if (ballistic > ground + 0.08 && hv > 9) {
+      c.airborne = true;
+      c.vy -= 9.8 * dt;
+      c.position.y = ballistic;
+      c.flightTime = 0;
+      c.airPitch = c.groundPitch || 0;
+      c.airRoll = c.groundRoll || 0;
+      return;
+    }
+    c.vy = slopeVy;
+    c.position.y = ground;
+    // gravity along the slope: quicker down the stands, slower up them
+    if (Math.abs(c.speed) > 1) c.speed -= 9.8 * Math.sin(c.groundPitch || 0) * 0.7 * dt;
   }
 
   updateCyclist(dt) {

@@ -200,6 +200,9 @@ function presetForSun({ alt, az }) {
 }
 
 class LightingSystem {
+  // Lamp: the kept part it belongs to was built again (main.js). While the part is kept, so is this.
+  release() { systems.delete(this); }
+
   constructor(scene, renderer = null) {
     systems.add(this);
     this.scene = scene;

@@ -402,6 +402,51 @@ class CityAudioSystem {
     if (this.emit('horn', { id: entity, ...entity.position, heading: entity.heading, seed: 4 }, { intensity: 0.7 })) this.lastHorn = now;
   }
 
+  // The roar of water from broken hydrants (hydrant-spray.js): one voice each where it gushes, at its pressure
+  gush(list) {
+    if (!this.ready || !this.context) return;
+    const ctx = this.context, now = ctx.currentTime;
+    this.gushVoices ??= [];
+    for (let i = 0; i < Math.max(list.length, this.gushVoices.length); i++) {
+      const g = list[i];
+      let v = this.gushVoices[i];
+      if (!v && g) {
+        const noise = ctx.createBufferSource();
+        noise.buffer = this.resources.noise;
+        noise.loop = true;
+        noise.playbackRate.value = 0.85 + i * 0.07;
+        const band = ctx.createBiquadFilter();
+        band.type = 'bandpass'; band.frequency.value = 1300; band.Q.value = 0.45;
+        const low = ctx.createBiquadFilter();
+        low.type = 'lowpass'; low.frequency.value = 260; low.Q.value = 0.6;
+        const lowGain = ctx.createGain(); lowGain.gain.value = 1.4;
+        const gain = ctx.createGain(); gain.gain.value = 0;
+        const panner = ctx.createPanner();
+        panner.panningModel = 'HRTF'; panner.distanceModel = 'inverse';
+        panner.refDistance = 6; panner.rolloffFactor = 1.1; panner.maxDistance = 400;
+        noise.connect(band).connect(gain);
+        noise.connect(low).connect(lowGain).connect(gain);
+        gain.connect(panner).connect(this.mix);
+        noise.start(now, i * 0.37);
+        v = this.gushVoices[i] = { noise, gain, panner, nodes: [noise, band, low, lowGain, gain, panner] };
+      }
+      if (!v) continue;
+      if (g) {
+        smooth(v.panner.positionX, g.x, now, 0.05); smooth(v.panner.positionY, g.y, now, 0.05); smooth(v.panner.positionZ, g.z, now, 0.05);
+        smooth(v.gain.gain, this.enabled ? 0.5 * g.level : 0, now, 0.25);
+      } else {
+        smooth(v.gain.gain, 0, now, 0.3);
+        if (!v.stopping) {
+          v.stopping = true;
+          v.noise.stop(now + 2);
+          v.noise.onended = () => { for (const node of v.nodes) node.disconnect(); };
+          this.gushVoices[i] = null;
+        }
+      }
+    }
+    while (this.gushVoices.length && !this.gushVoices[this.gushVoices.length - 1]) this.gushVoices.pop();
+  }
+
   update(dt, elapsed, camera, night = false) {
     if (!this.ready || !this.enabled || this.context?.state !== 'running' || document.hidden) return;
     this.accumulator += dt;

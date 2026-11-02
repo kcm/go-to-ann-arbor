@@ -29,4 +29,16 @@ function bowlSurface(x, z) {
   return WALL_TOP + (SEAT_TOP - WALL_TOP) * (r - rIn - AISLE_IN) / (r1 - rIn - AISLE_IN);
 }
 
-export { STADIUM, N, radiiAt, bowlSurface, FIELD_Y, WALL_TOP, SEAT_TOP, RIM_Y, WALL_Y, AISLE_IN, CONCOURSE };
+// What a car drives on inside the outer wall (relative to the ground around), or null outside it: the field, its
+// padded wall, the stands as one slope down their rows, the top row easing up to the walkway, and the parapet
+function carSurface(x, z) {
+  const dx = x - STADIUM.cx, dz = z - STADIUM.cz, r = Math.hypot(dx, dz);
+  const [rIn, rOut] = radiiAt(Math.atan2(dz, dx));
+  if (r >= rOut) return null;
+  if (r >= rOut - 0.6) return WALL_Y;
+  const r1 = rOut - CONCOURSE;
+  if (r >= r1 - 1 && r < r1) return SEAT_TOP + (RIM_Y - SEAT_TOP) * (r - r1 + 1);
+  return bowlSurface(x, z);
+}
+
+export { STADIUM, N, radiiAt, bowlSurface, carSurface, FIELD_Y, WALL_TOP, SEAT_TOP, RIM_Y, WALL_Y, AISLE_IN, CONCOURSE };

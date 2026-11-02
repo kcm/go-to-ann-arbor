@@ -25,6 +25,7 @@ import { GamepadControls } from './gamepad-controls.js';
 import { CameraSystem, CAMERA_PRESETS } from './cameras.js';
 import { LightingSystem, sunTimes } from './lighting.js';
 import { createKnockdowns } from './knockdowns.js';
+import { createHydrantSpray } from './hydrant-spray.js';
 import { CityMapSystem } from './city-map.js';
 import { setupSceneCulling, updateSceneCulling, cullAlso, showShadowStandIns } from './scene-culling.js';
 import { loadTerrain, setOnTerrain, groundHeight, waterLevel } from './terrain.js';
@@ -42,10 +43,17 @@ if (window.webkit?.messageHandlers?.lampNative && /Mac/.test(navigator.platform)
 // Lamp: a change that can't be swapped into the running city runs this file's code again in place (lamp-game.js,
 // "Running the game's code again"). What's slow to make is kept through that with live.keep: the renderer and its
 // compiled shaders, the ground's heights (terrain.js) and each part of the city, which is built again only when its own
-// code, or a part it's built from (its `inputs`), changed. The scene, the camera and the lights are kept too: three.js
+// code, the map data it's built from (its `from`: CITY_MAP and the rest below) or a part it's built from (its
+// `inputs`) changed, the rest of the city kept as it is. The scene, the camera and the lights are kept too: three.js
 // works out how to draw every object anew for a new one of them, which held the game still for a second at each change.
 // Everything else here (the HUD, the controllers, the sound) is made again from the page as it is now.
 const live = hot(import.meta);
+
+// The generated data each part of the city is built from (its keep's `from`): a change to one, a street's lanes added to
+// the map or new tree points, builds those parts again in place.
+const CITY_MAP = 'js/city-geodata.js';
+const BUILDING_DATA = ['js/building-geodata.js', 'js/building-geodata.bin.gz'];
+const TREE_DATA = ['js/tree-geodata.js', 'js/tree-geodata.bin.gz', 'js/tree-placements.js'];
 
 async function initApp() {
   const container = document.getElementById('canvas-container');
@@ -129,7 +137,7 @@ async function initApp() {
   const lighting = live.keep('lighting', () => {
     const made = new LightingSystem(scene, renderer);
     const own = [...scene.children];
-    return { made, own, dispose() { for (const object of own) object.removeFromParent(); } };
+    return { made, own, dispose() { made.release(); for (const object of own) object.removeFromParent(); } };
   }, { inputs: [scene, renderer] });
   scene.add(...lighting.own);
   const lightingSystem = lighting.made;
@@ -172,7 +180,7 @@ async function initApp() {
     // back from what that start saved: terrain.js)
     await setOnTerrain(g.getObjectByName('CityGrid'));
     return made;
-  }, { cull: setupSceneCulling }), { inputs: [heights], from: ['js/cascades.js', 'js/river.js', 'js/tsl-materials.js'] });
+  }, { cull: setupSceneCulling }), { inputs: [heights], from: [CITY_MAP, 'js/cascades.js', 'js/river.js', 'js/tsl-materials.js'] });
   const cityGrid = grid.made;
   markInit('cityGrid');
   // Lamp: the Argo Cascades' rocks and white water, on the steps of their water (cascades.js)
@@ -185,7 +193,7 @@ async function initApp() {
   const outskirts = outskirtsPart.made;
   markInit('outskirts');
   await showLoadingStage('Building the Big House...');
-  const landmarks = live.keep('landmarks', () => cityPart((g) => buildLandmarks(g), { cull: setupSceneCulling }), { inputs: [heights] });
+  const landmarks = live.keep('landmarks', () => cityPart((g) => buildLandmarks(g), { cull: setupSceneCulling }), { inputs: [heights], from: [CITY_MAP, 'js/stadium-geodata.js'] });
   const landmarkColliders = landmarks.made.colliders;
   markInit('landmarks');
   await showLoadingStage('Generating building footprints and facades...');
@@ -201,7 +209,7 @@ async function initApp() {
   const roofBytes = await asset('data/roof-shapes.json');
   setRoofShapes(roofBytes ? JSON.parse(new TextDecoder().decode(roofBytes)) : null);
   const blocks = live.keep('blocks', () => cityPart((g) => buildCityBlocks(g, landmarks.made.colliders, addresses, gasStations), { cull: setupSceneCulling }),
-    { inputs: [heights, landmarks], from: ['data/addresses.json', 'data/districts.json', 'data/gas-stations.json', 'data/roof-shapes.json'] });
+    { inputs: [heights, landmarks], from: [CITY_MAP, ...BUILDING_DATA, 'data/addresses.json', 'data/districts.json', 'data/gas-stations.json', 'data/roof-shapes.json'] });
   const cityBlocks = blocks.made;
   markInit('blocks');
   const allColliders = [...landmarkColliders, ...cityBlocks.colliders, ...outskirts.colliders, ...(cityGrid.colliders || [])];
@@ -216,7 +224,7 @@ async function initApp() {
     const made = buildStreetDetails(g, allColliders, streetFurniture);
     await setOnTerrain(g.getObjectByName('StreetDetails'));
     return made;
-  }, { cull: setupSceneCulling }), { inputs: [heights, grid, outskirtsPart, landmarks, blocks], from: ['data/street-furniture.json'] });
+  }, { cull: setupSceneCulling }), { inputs: [heights, grid, outskirtsPart, landmarks, blocks], from: [...TREE_DATA, 'data/street-furniture.json', 'js/street-details.js'] });
   const streetDetails = details.made;
   markInit('streetDetails');
   await showLoadingStage('Creating traffic and pedestrian routes...');
@@ -229,10 +237,10 @@ async function initApp() {
     ...details.made.footprints,
     ...allColliders.filter((c) => !c.obb
       && (c.minY ?? 0) - groundHeight((c.minX + c.maxX) * 0.5, (c.minZ + c.maxZ) * 0.5) < 3.5)
-  ], details.made.signalIntersections)), { inputs: [heights, grid, outskirtsPart, landmarks, blocks, details] });
+  ], details.made.signalIntersections)), { inputs: [heights, grid, outskirtsPart, landmarks, blocks, details], from: [CITY_MAP] });
   const trafficSystem = traffic.made;
   markInit('traffic');
-  const highway = live.keep('highwayTraffic', () => cityPart((g) => createHighwayTraffic(g, grid.made.highwayLanes)), { inputs: [grid] });
+  const highway = live.keep('highwayTraffic', () => cityPart((g) => createHighwayTraffic(g, grid.made.highwayLanes)), { inputs: [grid], from: [CITY_MAP] });
   const highwayTraffic = highway.made;
   await showLoadingStage('Adding road markings...');
   const roadPaint = live.keep('roadPaint', () => cityPart((g) => {
@@ -245,7 +253,7 @@ async function initApp() {
       o.geometry.boundingSphere.radius += 16;
     });
     return made;
-  }, { cull: setupSceneCulling }), { inputs: [heights, traffic] });
+  }, { cull: setupSceneCulling }), { inputs: [heights, traffic], from: [CITY_MAP, 'js/road-network.js'] });
   markInit('roadPaint');
   // Traffic lights and stop & yield signs where the road network put them (traffic-controls.js)
   const controlsPart = live.keep('trafficControls', () => cityPart((g) => buildTrafficControls(g, traffic.made.network), { cull: setupSceneCulling }), { inputs: [heights, traffic, details] });
@@ -273,8 +281,14 @@ async function initApp() {
     const knock = o.kind && (o.pose || o.parts?.length) ? { ...o, g, down: false } : null;
     allColliders.push({ minX: o.x - o.r, maxX: o.x + o.r, minZ: o.z - o.r, maxZ: o.z + o.r, minY: g - 1, maxY: g + 6, thin: true, knock });
   }
+  // a hydrant knocked off its main gushes water (hydrant-spray.js)
+  const hydrantSpray = createHydrantSpray(scene);
+  const gushList = [];
   const knockdowns = createKnockdowns({
-    onFall: (it, speed) => log(`[knock] a ${it.kind} went over at ${Math.round(speed * 3.6)} km/h`),
+    onFall: (it, speed) => {
+      log(`[knock] a ${it.kind} went over at ${Math.round(speed * 3.6)} km/h`);
+      if (it.kind === 'hydrant') hydrantSpray.start(it.x, it.z);
+    },
     onLand: (it, spin) => audioSystem?.cue(it.kind === 'tree' ? 'thud' : 'crash',
       { x: it.x + it.dx * it.height * 0.6, y: it.g, z: it.z + it.dz * it.height * 0.6 }, Math.min(1, 0.4 + spin * 0.2))
   });
@@ -328,27 +342,6 @@ async function initApp() {
         if (mode === 'kayak') { const k = controllerManager.entities.kayak; k.heading = s.heading; k.mesh.rotation.y = s.heading; }
       }
       controllerManager.setMode('car');
-      // CRASHTEST (temporary)
-      const tp = parkedCars.nearest(SCENIC_STARTS.car.x, SCENIC_STARTS.car.z, 120);
-      if (tp) {
-        const sn = Math.sin(tp.yaw), cs = Math.cos(tp.yaw);
-        controllerManager.teleportActiveTo(tp.x - sn * 30 - cs * 2, tp.z - cs * 30 + sn * 2, tp.yaw - 0.6);
-        log(`[crashtest] parked ${tp.kind} at ${tp.x.toFixed(1)}, ${tp.z.toFixed(1)} yaw ${tp.yaw.toFixed(2)}`);
-        const hx = tp.x, hz = tp.z, hy = tp.yaw, st = parkedCars.step;
-        let wasMoving = false;
-        parkedCars.step = (dt, solid) => {
-          const out = st(dt, solid);
-          const moving = tp.vx !== 0 || tp.vz !== 0 || tp.w !== 0;
-          if (wasMoving && !moving) log(`[crashtest] ${tp.kind} came to rest ${Math.hypot(tp.x - hx, tp.z - hz).toFixed(2)} m from its spot, turned ${(tp.yaw - hy).toFixed(2)}; drawn ${!!tp.slot}`);
-          wasMoving = moving;
-          return out;
-        };
-        const rc = controllerManager.reportCollision.bind(controllerManager);
-        controllerManager.reportCollision = (a, b, kind, x, y, z, nx, ny, nz, speed) => {
-          if (speed > 1.5) log(`[crashtest] ${kind} hit at ${speed.toFixed(1)} m/s; car speed ${a.speed?.toFixed(1)} spin ${a.angularVel?.toFixed(2)}${b?.vx !== undefined && b.mass ? `; parked now ${b.x.toFixed(1)}, ${b.z.toFixed(1)} v ${Math.hypot(b.vx, b.vz).toFixed(1)} spin ${b.w.toFixed(2)}` : ''}`);
-          rc(a, b, kind, x, y, z, nx, ny, nz, speed);
-        };
-      }
     }
     if (saved?.version === 2) {
       for (const mode of Object.keys(controllerManager.entities)) {
@@ -1142,6 +1135,8 @@ async function initApp() {
     elapsed += dt;
     tickNotice(dt);
     knockdowns.update(dt);
+    hydrantSpray.update(dt, cameraSystem.camera);
+    audioSystem?.gush?.(hydrantSpray.gushes(gushList));
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
     gamepadControls.supply(f.pads[0]);
@@ -1312,7 +1307,9 @@ async function initApp() {
   }
 
   // sharp: drawing smaller never made frames faster here (the log showed it undone every time), it only blurred the city
-  game({ renderer, init() { const was = pendingRestore(); if (was) startFrom(was); }, frame, touch: false, keyboard: false, snapshot, sharp: true });
+  game({ renderer, init() { const was = pendingRestore(); if (was) startFrom(was); }, frame, touch: false, keyboard: false, snapshot, sharp: true,
+    // What this run made that no part keeps goes with it: the map and the camera system are made afresh by the next.
+    dispose() { cameraSystem.release(); mapSystem.release(); } });
   container.appendChild(renderer.domElement);
 }
 

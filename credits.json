@@ -1,13 +1,13 @@
 {
   "remixOf" : [
     {
-      "commit" : "f7e57636dda8f1c786913da6568d27c54fb27a41",
+      "commit" : "99efbab0a38a6010592015469f5d9912ba14b784",
       "name" : "New York",
       "starter" : "newyork",
       "url" : "https://github.com/lampdotdev/newyork"
     },
     {
-      "commit" : "c2927d256fc69b92bc3a8c5de081717bad133b39",
+      "commit" : "7997130ec6ced6009c2188b6829c9d5ff3a793ca",
       "name" : "Go To Ann Arbor",
       "url" : "https://github.com/mrubens/go-to-ann-arbor",
       "wish" : "3DF4E397-D414-4837-8390-3F7946A6D12D"
@@ -16,7 +16,7 @@
   "upstream" : [
     {
       "author" : "Mr.doob",
-      "commit" : "e35c06c0d896052a80ff117aefe8b99e978913d4",
+      "commit" : "13dd142b480bcfa01a6b18e36127c87e41cb4d80",
       "license" : "MIT",
       "licenseFile" : "Web/LICENSE-slop-newyork",
       "name" : "Slop New York",

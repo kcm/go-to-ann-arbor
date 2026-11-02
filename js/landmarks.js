@@ -147,6 +147,9 @@ function buildBigHouse(group, colliders) {
     const rOut = radiiAt(t.side < 0 ? Math.PI : 0)[1];
     const outerX = cx + t.side * rOut, innerX = outerX - t.side * t.depth, midX = (outerX + innerX) / 2;
     const y0 = RIM_Y + 1.5, h = t.top - y0;
+    // solid to a car driving round the top of the stands (one passing under its overhang clears it)
+    colliders.push({ minX: Math.min(innerX, outerX), maxX: Math.max(innerX, outerX), minZ: cz - t.half, maxZ: cz + t.half,
+      minY: G + y0, maxY: G + t.top, solid: true });
     const box = new THREE.Mesh(new THREE.BoxGeometry(t.depth, h, t.half * 2), brickMat);
     box.position.set(midX, G + y0 + h / 2, cz);
     box.castShadow = box.receiveShadow = true;
@@ -154,6 +157,8 @@ function buildBigHouse(group, colliders) {
     // the brick down to the ground on the outside
     const base = new THREE.Mesh(new THREE.BoxGeometry(3, y0 + 3, t.half * 2), brickMat);
     base.position.set(outerX - t.side * 1.5, G + (y0 - 3) / 2, cz);
+    colliders.push({ minX: Math.min(outerX, outerX - t.side * 3), maxX: Math.max(outerX, outerX - t.side * 3),
+      minZ: cz - t.half, maxZ: cz + t.half, minY: G - 3, maxY: G + y0, solid: true });
     group.add(base);
     for (let b = 0; b < 3; b++) {
       const gy = y0 + 3 + b * (h - 6) / 3, gh = (h - 6) / 3 - 1.4;
@@ -211,7 +216,7 @@ function buildBigHouse(group, colliders) {
     }
   }
 
-  // Keep the survey's pieces of the stadium out, and the player and traffic outside its wall
+  // Keep the survey's pieces of the stadium out, and people, bikes and traffic outside its wall (a car may drive in over it)
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (let k = 0; k < N; k++) {
     const a = (k / N) * Math.PI * 2, r = radiiAt(a)[1];
