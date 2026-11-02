@@ -208,6 +208,8 @@ const LANDMARKS = [
 });
 // The Amtrak station on Depot St (by its real place: OpenStreetMap's name for it is just "Ann Arbor")
 LANDMARKS.push({ id: 'amtrak', name: 'Ann Arbor Amtrak Station', short: 'Amtrak', x: 432, z: -905, district: 'Lower Town' });
+// The Argo Cascades beside Argo Dam: the middle of their channel (cascades.js)
+LANDMARKS.push({ id: 'cascades', name: 'Argo Cascades', short: 'Argo Cascades', x: 419, z: -1228, district: districtLabel(districtAt(419, -1228)) });
 
 // Street-level arrivals shared by every travel mode: the nearest point of a named street to each place, facing it.
 // Heading 0 faces south (+z), PI north.
@@ -245,7 +247,8 @@ const TELEPORT_LOCATIONS = {
   umma: arrival(lm('umma').x, lm('umma').z, lm('umma')),
   library: arrival(lm('library').x, lm('library').z, lm('library')),
   crisler: arrival(lm('crisler').x, lm('crisler').z, lm('crisler')),
-  amtrak: arrival(lm('amtrak').x, lm('amtrak').z, lm('amtrak'))
+  amtrak: arrival(lm('amtrak').x, lm('amtrak').z, lm('amtrak')),
+  cascades: arrival(lm('cascades').x, lm('cascades').z, lm('cascades'))
 };
 
 // The city's building names (Bldg_Name, GEO.places): each named building's centre and half its size, in 100 m cells

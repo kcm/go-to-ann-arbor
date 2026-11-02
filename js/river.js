@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { nearDrop } from './cascades.js';
 import { riverbedHeight, riverDepth, waterLevel, bridgeDecks } from './terrain.js';
 
 // The Huron River and its ponds sunk into their banks (terrain.js digs the bed from data/river.bin.gz): grassy banks
@@ -51,17 +52,29 @@ function buildRiver(group, geos, waterMat) {
   const mud = new THREE.Color(0x5a4c35).convertSRGBToLinear();
   const silt = new THREE.Color(0x4a4632).convertSRGBToLinear(), c = new THREE.Color();
   const sloped = (p) => { const d = riverDepth(p[0], p[2]); return d > 0.001 && d < 0.999; };
+  // around the Argo Cascades (cascades.js), where the channel's levels step down beside land the map calls water
+  const byCascades = (a, b, k) => Math.max(a[0], b[0], k[0]) > 140 && Math.min(a[0], b[0], k[0]) < 660
+    && Math.max(a[2], b[2], k[2]) > -1300 && Math.min(a[2], b[2], k[2]) < -1030;
+  const dry = (x, z) => { const lv = waterLevel(x, z); return lv === null || riverbedHeight(x, z) > lv + 0.1; };
   const waterPos = [];
   for (const geo of geos) {
     const bank = subdivide(geo, (a, b, k) => {
       const l = longest(a, b, k);
       if (l > 1600) return true;
+      if (l > 9 && byCascades(a, b, k)) return true; // following the ground there, every 3 m
       if (l <= 30) return false;
       const m = [(a[0] + b[0] + k[0]) / 3, 0, (a[2] + b[2] + k[2]) / 3];
       return sloped(a) || sloped(b) || sloped(k) || sloped(m);
     });
     for (let i = 0; i < bank.length; i += 3) {
       const x = bank[i], z = bank[i + 2], y = riverbedHeight(x, z), lv = waterLevel(x, z) ?? y;
+      // none on the land beside the cascades, which the ground there draws itself
+      if (i % 9 === 0) {
+        const a = [x, 0, z], b = [bank[i + 3], 0, bank[i + 5]], k = [bank[i + 6], 0, bank[i + 8]], high = (p) => {
+          const g = riverbedHeight(p[0], p[2]), l = waterLevel(p[0], p[2]); return l === null || g > l + 0.6;
+        };
+        if (byCascades(a, b, k) && high(a) && high(b) && high(k)) { i += 6; continue; }
+      }
       bankPos.push(x, y, z);
       const above = y - lv;
       if (above > 1.0) c.copy(grass).lerp(lawn, Math.min(1, (above - 1.0) / 0.4));
@@ -71,10 +84,22 @@ function buildRiver(group, geos, waterMat) {
       bankCol.push(c.r, c.g, c.b);
     }
     // The water: flat at the river's level, cut every 20 m so it follows the level down the river
-    const water = subdivide(geo, (a, b, k) => longest(a, b, k) > 400);
-    for (let i = 0; i < water.length; i += 3) {
-      const x = water[i], z = water[i + 2];
-      waterPos.push(x, waterLevel(x, z) ?? riverbedHeight(x, z) + 0.05, z);
+    // and every 60 cm over the Argo Cascades' drops, so each step shows (cascades.js)
+    const water = subdivide(geo, (a, b, k) => {
+      const l = longest(a, b, k);
+      if (l > 400) return true;
+      if (l <= 0.36) return false;
+      const reach = Math.sqrt(l);
+      // and every 3 m down the rest of the channel, so its pools lie at their own levels
+      // (any piece reaching over it, not only those with a corner in it, so none lies across a step)
+      if (l > 9 && byCascades(a, b, k)) return true;
+      return [a, b, k, [(a[0] + b[0] + k[0]) / 3, 0, (a[2] + b[2] + k[2]) / 3]].some((p) => nearDrop(p[0], p[2], reach));
+    });
+    for (let i = 0; i < water.length; i += 9) {
+      const a = [water[i], 0, water[i + 2]], b = [water[i + 3], 0, water[i + 5]], k = [water[i + 6], 0, water[i + 8]];
+      // none over the land beside the cascades, where the water would show through the ground
+      if (byCascades(a, b, k) && dry(a[0], a[2]) && dry(b[0], b[2]) && dry(k[0], k[2])) continue;
+      for (const [x, , z] of [a, b, k]) waterPos.push(x, waterLevel(x, z) ?? riverbedHeight(x, z) + 0.05, z);
     }
   }
   if (bankPos.length) {
@@ -103,7 +128,9 @@ function buildRiver(group, geos, waterMat) {
     for (const t of tiles.values()) {
       const m = meshOf(t, waterMat, 'RiverWater');
       const n = m.geometry.attributes.normal;
-      for (let i = 0; i < n.count; i++) n.setXYZ(i, 0, 1, 0);
+      // flat, but for the cascades' drops, which keep their slope (the water's shading tilts with it)
+      const ps = m.geometry.attributes.position;
+      for (let i = 0; i < n.count; i++) if (!nearDrop(ps.getX(i), ps.getZ(i), 0)) n.setXYZ(i, 0, 1, 0);
       river.add(m);
     }
   }

@@ -13,6 +13,7 @@ import { float, texture, uniform, vec2, positionLocal, positionWorld, cameraPosi
 import { hot, asset, log, work } from '../lamp-game.js';
 import { STADIUM, radiiAt, bowlSurface } from './stadium-shape.js';
 import { GEO } from './city-geodata.js';
+import { carveCascades, cascadeDepth, cascadeLevel } from './cascades.js';
 import { baseHeight, digAt, levelAt, onDeck, BUCKET, bucketKey, drapeLayer, CORE_SOURCE } from './ground-core.js';
 
 let grid = null; // { x0, z0, step, cols, rows, heights: Float32Array }
@@ -20,7 +21,7 @@ let grid = null; // { x0, z0, step, cols, rows, heights: Float32Array }
 // Lamp: kept while main.js runs again for a change (lamp-game.js, "Running the game's code again"), so the heights are
 // read once; the parts of the city built on them name what this returns as one of their inputs.
 async function loadTerrain(url = './data/elevation.bin.gz') {
-  grid = await hot(import.meta).keep('heightsAndRiver', () => readHeights(url));
+  grid = await hot(import.meta).keep('heightsAndRiver', () => readHeights(url), { from: ['js/cascades.js'] });
   return grid;
 }
 
@@ -73,6 +74,7 @@ async function readRiver(g, url) {
     const level = new Float32Array(cm.length);
     for (let i = 0; i < cm.length; i++) level[i] = cm[i] / 100;
     const r = { dx0, dz0, dstep, dcols, drows, dig, lx0, lz0, lstep, lcols, lrows, level, bridges: [], buckets: new Map() };
+    carveCascades(r); // the Argo Cascades' channel, unbroken (cascades.js)
     buildDecks(g, r);
     console.log(`[terrain] the river's bed ${dcols} × ${drows} at ${dstep} m, ${r.bridges.length} bridges`);
     return r;
@@ -156,7 +158,7 @@ function buildDecks(g, r) {
 // The river's water level at (x, z), or null where there's no river
 function waterLevel(x, z) {
   const r = grid?.river;
-  return r ? levelAt(r, x, z) : null;
+  return r ? cascadeLevel(x, z, levelAt(r, x, z)) : null; // stepping down the Argo Cascades (cascades.js)
 }
 
 // The bridges' decks: { kind (0 street, 1 railway, 2 footbridge), w, half (half the deck's width), length,
@@ -216,7 +218,7 @@ function riverbedHeight(x, z) {
   const r = grid.river;
   const f = r ? digAt(r, x, z) : 0;
   if (f > 0) {
-    const bed = levelAt(r, x, z) - 1.8;
+    const bed = cascadeLevel(x, z, levelAt(r, x, z)) - cascadeDepth(x, z, 1.8);
     if (bed < h) h += (bed - h) * f;
   }
   return h;

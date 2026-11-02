@@ -28,9 +28,11 @@ import { HEADLIGHTS, createVehicleHeadlight, placeVehicleHeadlight } from './veh
 import { bryantParkLawn } from './landmarks.js';
 import { groundHeight, groundTilt, nearestWater, riverDepth, riverFlow, stadiumGround, waterLevel } from './terrain.js';
 import { WATER_RIPPLES, waterDisturb } from './tsl-materials.js';
+import { cascadeCurrent, cascadeDepth, onWeirRocks, pondDraw } from './cascades.js';
 import { polygonContact, polygonContains } from './building-collision.js';
+import { vehicleContact, resolveVehicleContact } from './vehicle-physics.js';
 import { bowlSurface } from './stadium-shape.js';
-import { hot } from '../lamp-game.js';
+import { hot, rumble } from '../lamp-game.js';
 
 // Player models, animation and movement for walking, driving, cycling and flying.
 
@@ -199,6 +201,43 @@ function buildingContact(c, x, y, z, body, contact) {
     contact.depth = depth;
   }
   return true;
+}
+
+// The player's car meeting something that doesn't move (a wall, a fence, a pole that stays up) as a rigid body: the
+// impulse at the corner or face that touched, from its weight and its spin's lever arm, with a little bounce and the
+// panels' sliding friction, so a glancing hit turns it along the wall and a hit at one corner spins it. Says the
+// closing speed and the change of velocity it gave.
+const wallHit = { closing: 0, dv: 0, x: 0, z: 0 };
+function carWallImpulse(car, sin, cos, x, z, nx, nz, mass, hw = 0.86, hl = 2.18) {
+  // the point of contact: the car's corners deepest into the wall, averaged (a flat face meets it along its middle)
+  let min = Infinity, sx = 0, sz = 0, n = 0;
+  for (let k = 0; k < 4; k++) {
+    const a = (k & 1 ? 1 : -1) * hw, b = (k & 2 ? 1 : -1) * hl;
+    const ox = cos * a + sin * b, oz = -sin * a + cos * b;
+    const d = ox * nx + oz * nz;
+    if (d < min - 0.12) { min = d; sx = ox; sz = oz; n = 1; }
+    else if (d < min + 0.12) { if (d < min) min = d; sx += ox; sz += oz; n++; }
+  }
+  const ax = sx / n, az = sz / n;
+  wallHit.x = x + ax; wallHit.z = z + az;
+  let vx = sin * car.speed + (car.vx || 0), vz = cos * car.speed + (car.vz || 0), w = car.angularVel || 0;
+  const closing = -((vx + w * az) * nx + (vz - w * ax) * nz);
+  wallHit.closing = closing; wallHit.dv = 0;
+  if (closing <= 0) return wallHit;
+  const invM = 1 / mass, invI = 3 * invM / (hw * hw + hl * hl);
+  const rn = az * nx - ax * nz;
+  const j = (1 + (closing > 1.5 ? 0.18 : 0)) * closing / (invM + rn * rn * invI);
+  vx += nx * j * invM; vz += nz * j * invM; w += rn * j * invI;
+  const tx = nz, tz = -nx, rt = az * tx - ax * tz;
+  const slide = (vx + w * az) * tx + (vz - w * ax) * tz;
+  const jt = Math.max(-j * 0.45, Math.min(j * 0.45, -slide / (invM + rt * rt * invI)));
+  vx += tx * jt * invM; vz += tz * jt * invM; w += rt * jt * invI;
+  car.speed = vx * sin + vz * cos;
+  car.vx = vx - sin * car.speed;
+  car.vz = vz - cos * car.speed;
+  car.angularVel = Math.max(-6, Math.min(6, w));
+  wallHit.dv = j * invM;
+  return wallHit;
 }
 
 function createGoBluePlateTexture() {
@@ -1241,6 +1280,11 @@ class ThirdPersonControllerManager {
       const c = near[i];
       // the helicopter flies down into the stadium's bowl, and sits on the roof under its skids
       if (heli && (isStadium(c) || c.thin || standing?.has(c))) continue;
+      // a parked car is a body of its own: the two trade momentum, and it's shoved along and spun (parked-cars.js)
+      if (carEntity && c.parked && this.parkedCars) {
+        if (c.maxY > pos.y && c.minY < pos.y + body.top) this.shoveParked(c.parked, pos, carEntity, entity, sinH, cosH);
+        continue;
+      }
       if (buildingContact(c, pos.x, pos.y, pos.z, body, contact)) {
         const { nx, nz, depth } = contact;
         // a tree, pole or sign post the car hits hard enough goes over (knockdowns.js) instead of stopping it
@@ -1275,32 +1319,11 @@ class ThirdPersonControllerManager {
         }
 
         if (carEntity) {
-          const totalVx = sinH * carEntity.speed + (carEntity.vx || 0);
-          const totalVz = cosH * carEntity.speed + (carEntity.vz || 0);
-          const vn = -(totalVx * nx + totalVz * nz);
-          if (vn > 0.5) {
-            const headOn = Math.abs(sinH * nx + cosH * nz);
-            const sideDot = cosH * nx - sinH * nz;
-            carEntity.vx = (carEntity.vx || 0) + nx * vn * 0.42;
-            carEntity.vz = (carEntity.vz || 0) + nz * vn * 0.42;
-            if (headOn > 0.72) {
-              carEntity.speed = -carEntity.speed * 0.25;
-            } else {
-              carEntity.speed *= (1.0 - 0.62 * headOn);
-              carEntity.angularVel = (carEntity.angularVel || 0) + sideDot * (sinH * nx + cosH * nz >= 0 ? -1 : 1) * Math.min(3.2, vn * 0.22);
-            }
-            carEntity.pitchVel = (carEntity.pitchVel || 0) + (sinH * nx + cosH * nz) * Math.min(14.0, vn) * 0.16;
-            carEntity.rollVel = (carEntity.rollVel || 0) - sideDot * Math.min(14.0, vn) * 0.22;
-            carEntity.heaveVel = (carEntity.heaveVel || 0) + Math.min(1.4, vn * 0.11);
-            if (vn > 2.2) {
-              carEntity.lastCollisionSpark = {
-                x: pos.x - nx * extX * 0.92,
-                y: 0.56,
-                z: pos.z - nz * extZ * 0.92,
-                nx,
-                nz,
-                speed: vn
-              };
+          const hit = carWallImpulse(carEntity, sinH, cosH, pos.x, pos.z, nx, nz, carEntity.drive?.mass || 1500);
+          if (hit.closing > 0.5) {
+            this.carImpactKick(carEntity, sinH, cosH, nx, nz, hit.dv);
+            if (hit.closing > 2.2) {
+              carEntity.lastCollisionSpark = { x: hit.x, y: 0.56, z: hit.z, nx, nz, speed: hit.closing };
             }
           }
         }
@@ -1315,6 +1338,80 @@ class ThirdPersonControllerManager {
           i = -1;
           while (i + 1 < near.length && near[i + 1]._order <= order) i++;
         }
+      }
+    }
+  }
+
+  // The car's suspension and body thrown by an impact of `dv` m/s along the normal (nx, nz)
+  carImpactKick(car, sin, cos, nx, nz, dv) {
+    const kick = Math.min(12, dv);
+    car.pitchVel = (car.pitchVel || 0) + (sin * nx + cos * nz) * kick * 0.18;
+    car.rollVel = (car.rollVel || 0) - (cos * nx - sin * nz) * kick * 0.24;
+    car.heaveVel = (car.heaveVel || 0) + Math.min(1.4, kick * 0.1);
+  }
+
+  // The player's car into a parked one: pushed apart by their weights, then the impulse at the touching faces shared
+  // between them, so a heavy hit shunts it down the row and a corner clip spins both
+  shoveParked(p, pos, car, entity, sin, cos) {
+    const a = this._shoveA ??= {}, b = this._shoveB ??= {}, hit = this._shoveHit ??= {};
+    const mass = car.drive?.mass || 1500;
+    Object.assign(a, { x: pos.x, z: pos.z, sin, cos, halfW: 0.86, halfL: 2.18, mass,
+      vx: sin * car.speed + (car.vx || 0), vz: cos * car.speed + (car.vz || 0), angularVel: car.angularVel || 0 });
+    const o = p.collider.obb;
+    Object.assign(b, { x: o.cx, z: o.cz, sin: o.sn, cos: o.cs, halfW: p.halfW, halfL: p.halfL, mass: p.mass,
+      vx: p.vx, vz: p.vz, angularVel: p.w });
+    if (!vehicleContact(a, b, hit)) return;
+    const share = p.mass / (mass + p.mass);
+    pos.x += hit.nx * hit.depth * share;
+    pos.z += hit.nz * hit.depth * share;
+    const closing = resolveVehicleContact(a, b, hit);
+    p.vx = b.vx; p.vz = b.vz; p.w = b.angularVel;
+    // its share of the push out comes as a nudge it slides off with
+    p.vx -= hit.nx * hit.depth * (1 - share) * 20;
+    p.vz -= hit.nz * hit.depth * (1 - share) * 20;
+    this.parkedCars.wake(p);
+    if (closing <= 0) return;
+    car.speed = a.vx * sin + a.vz * cos;
+    car.vx = a.vx - sin * car.speed;
+    car.vz = a.vz - cos * car.speed;
+    car.angularVel = a.angularVel;
+    if (closing > 0.5) {
+      this.carImpactKick(car, sin, cos, hit.nx, hit.nz, hit.impulse / mass);
+      this.reportCollision(entity, p, 'vehicle', hit.x, pos.y + 0.56, hit.z, hit.nx, 0, hit.nz, closing);
+      if (closing > 2.2) car.lastCollisionSpark = { x: hit.x, y: 0.56, z: hit.z, nx: hit.nx, nz: hit.nz, speed: closing };
+    }
+  }
+
+  // A shoved parked car kept out of the buildings, walls and posts around it, losing the speed it had into them
+  settleParked(p) {
+    const o = p.collider.obb;
+    const body = collisionBody('car', 0, p.yaw);
+    body.hx = p.halfW; body.hz = p.halfL;
+    const contact = this._settleContact ??= { nx: 0, nz: 0, depth: 0 };
+    const y = p.collider.minY + 0.05;
+    for (const c of this.nearColliders(o.cx, o.cz, p.halfL + 6)) {
+      if (c === p.collider || c.parked || c.knock?.down) continue;
+      if (!buildingContact(c, o.cx, y, o.cz, body, contact)) continue;
+      const { nx, nz, depth } = contact;
+      o.cx += nx * depth; o.cz += nz * depth;
+      const vn = p.vx * nx + p.vz * nz;
+      if (vn < 0) {
+        p.vx -= nx * vn * 1.15; p.vz -= nz * vn * 1.15;
+        p.w *= 0.6;
+      }
+    }
+  }
+
+  // A box that moved (a parked car shoved along) is found from the cells it's in now as well
+  refreshCollider(c) {
+    if (!this._colliderCells) return;
+    const CELL = 48;
+    for (let ix = Math.floor(c.minX / CELL); ix <= Math.floor(c.maxX / CELL); ix++) {
+      for (let iz = Math.floor(c.minZ / CELL); iz <= Math.floor(c.maxZ / CELL); iz++) {
+        const k = (ix + 4096) * 8192 + (iz + 4096);
+        let list = this._colliderCells.get(k);
+        if (!list) this._colliderCells.set(k, (list = []));
+        if (!list.includes(c)) list.push(c);
       }
     }
   }
@@ -1738,9 +1835,9 @@ class ThirdPersonControllerManager {
     else if (wet < 0.2 && k._bladeIn) { k._bladeIn = false; this.kayakRipple(k, bladeX, bladeZ, 0.6); }
 
     // Only a blade in the water moves the kayak: each pull surges it on, and the hull's drag (rising with the square
-    // of its speed) slows it between strokes, to about 4 m/s flat out
-    const pull = Math.abs(throttle) > 0.05 ? wet * Math.sign(throttle) * 3.1 * (0.6 + 0.4 * Math.abs(throttle)) : 0;
-    k.speed += (pull - 0.11 * k.speed * Math.abs(k.speed) - 0.22 * k.speed) * dt;
+    // of its speed) slows it between strokes, to about 5 m/s flat out
+    const pull = Math.abs(throttle) > 0.05 ? wet * Math.sign(throttle) * 4.2 * (0.6 + 0.4 * Math.abs(throttle)) : 0;
+    k.speed += (pull - 0.11 * k.speed * Math.abs(k.speed) - 0.18 * k.speed) * dt;
     // a turn is a sweep stroke: stronger while a blade is in
     const turnTarget = turn * (0.6 + 0.5 * wet) * (0.95 + Math.min(1, Math.abs(k.speed) / 3) * 0.45);
     k.turnVel += (turnTarget - k.turnVel) * Math.min(1, dt * 3.2);
@@ -1754,33 +1851,70 @@ class ThirdPersonControllerManager {
       const m = current(k.position.x, k.position.z);
       cx = flow.x * m; cz = flow.z * m;
     }
-    const follow = Math.min(1, dt * 0.9);
+    // on the pond above the cascades: still water, drawing slowly into their channel
+    const still = this._still ??= { x: 0, z: 0, weight: 0 };
+    if (!pondDraw(k.position.x, k.position.z, still)) still.weight = 0;
+    else { cx += (still.x - cx) * still.weight; cz += (still.z - cz) * still.weight; }
+    // in the Argo Cascades: their own current, down the channel and quick through each chute, and rough below it
+    const rapid = this._rapid ??= { x: 0, z: 0, rough: 0, weight: 0 };
+    if (!cascadeCurrent(k.position.x, k.position.z, rapid)) rapid.rough = rapid.weight = 0;
+    else { cx += (rapid.x - cx) * rapid.weight; cz += (rapid.z - cz) * rapid.weight; }
+    const follow = Math.min(1, dt * (0.9 + 1.6 * rapid.rough));
     k.driftX += (cx - k.driftX) * follow;
     k.driftZ += (cz - k.driftZ) * follow;
     {
       const mb = current(k.position.x + sh * 1.6, k.position.z + ch * 1.6), bowX = flow.x * mb, bowZ = flow.z * mb;
       const ms = current(k.position.x - sh * 1.6, k.position.z - ch * 1.6), sternX = flow.x * ms, sternZ = flow.z * ms;
       // across the hull: what the bow is pushed sideways more than the stern swings the heading
-      k.turnVel += ((bowX - sternX) * ch - (bowZ - sternZ) * sh) / 3.2 * Math.min(1, dt * 2.5);
+      k.turnVel += ((bowX - sternX) * ch - (bowZ - sternZ) * sh) / 3.2 * Math.min(1, dt * 2.5) * (1 - still.weight);
     }
 
-    // afloat: the middle, the bow and the stern all over open water
+    // afloat: the middle, the bow and the stern all over open water (the Argo Cascades' channel is open; the rocks of
+    // their weirs aren't, but for the chute through each)
+    const open = (x, z) => (onWeirRocks(x, z) ? 0 : cascadeDepth(x, z, riverDepth(x, z)));
     const afloat = (x, z, h) => {
       const sn = Math.sin(h) * 1.55, cs = Math.cos(h) * 1.55;
-      return riverDepth(x, z) > 0.45 && riverDepth(x + sn, z + cs) > 0.2 && riverDepth(x - sn, z - cs) > 0.2;
+      return open(x, z) > 0.45 && open(x + sn, z + cs) > 0.2 && open(x - sn, z - cs) > 0.2;
     };
+    // how far from aground: above 0 afloat; wedged on the rocks, any turn or move that doesn't make it worse is let go
+    const fit = (x, z, h) => {
+      const sn = Math.sin(h) * 1.55, cs = Math.cos(h) * 1.55;
+      return Math.min(open(x, z) - 0.45, open(x + sn, z + cs) - 0.2, open(x - sn, z - cs) - 0.2);
+    };
+    const freed = (x, z, h) => afloat(x, z, h) || fit(x, z, h) >= fit(k.position.x, k.position.z, k.heading) - 1e-3;
+    {
+      // wedged for a moment: ease out to the nearest place the whole hull floats
+      const wedged = !afloat(k.position.x, k.position.z, k.heading);
+      k.wedged = wedged ? (k.wedged ?? 0) + dt : 0;
+      if (k.wedged > 0.6 || (wedged && onWeirRocks(k.position.x, k.position.z))) {
+        let best = null;
+        for (let r = 1; r <= 10 && !best; r += 1) {
+          for (let a = 0; a < 16 && !best; a++) {
+            const ang = (a / 16) * Math.PI * 2, px = k.position.x + Math.sin(ang) * r, pz = k.position.z + Math.cos(ang) * r;
+            for (const dh of [0, 0.4, -0.4, 0.8, -0.8]) if (afloat(px, pz, k.heading + dh)) { best = [px, pz, dh]; break; }
+          }
+        }
+        if (best) {
+          const t = Math.min(1, dt * 2.5);
+          k.position.x += (best[0] - k.position.x) * t; k.position.z += (best[1] - k.position.z) * t;
+          k.heading += best[2] * t;
+          k.speed *= 0.5; k.driftX = k.driftZ = 0;
+        }
+      }
+    }
     const x = k.position.x, z = k.position.z;
-    if (!afloat(x, z, k.heading) && riverDepth(x, z) < 0.2) {
+    // (not on a weir's rocks, which sit in the river's water: the wedged kayak eases off them above)
+    if (!afloat(x, z, k.heading) && open(x, z) < 0.2 && !onWeirRocks(x, z)) {
       // somehow ashore: back to the nearest water
       const water = nearestWater(x, z, 2500);
       if (water) { k.position.x = water.x; k.position.z = water.z; }
     }
     let heading = k.heading + k.turnVel * dt;
-    if (!afloat(k.position.x, k.position.z, heading)) { heading = k.heading; k.turnVel *= 0.3; }
+    if (!freed(k.position.x, k.position.z, heading)) { heading = k.heading; k.turnVel *= 0.3; }
     k.heading = heading;
     const vx = Math.sin(heading) * k.speed + k.driftX, vz = Math.cos(heading) * k.speed + k.driftZ;
     const nx = k.position.x + vx * dt, nz = k.position.z + vz * dt;
-    if (afloat(nx, nz, heading)) {
+    if (freed(nx, nz, heading)) {
       k.position.x = nx; k.position.z = nz;
     } else if (afloat(nx, k.position.z, heading)) {
       k.position.x = nx; k.speed *= 1 - Math.min(1, dt * 2); k.driftZ = 0;
@@ -1792,12 +1926,12 @@ class ThirdPersonControllerManager {
       k.speed *= 0.3;
       k.driftX = k.driftZ = 0;
       const e = 1.5;
-      const gx = riverDepth(k.position.x + e, k.position.z) - riverDepth(k.position.x - e, k.position.z);
-      const gz = riverDepth(k.position.x, k.position.z + e) - riverDepth(k.position.x, k.position.z - e);
+      const gx = open(k.position.x + e, k.position.z) - open(k.position.x - e, k.position.z);
+      const gz = open(k.position.x, k.position.z + e) - open(k.position.x, k.position.z - e);
       const gl = Math.hypot(gx, gz);
       if (gl > 1e-4) {
         const px = k.position.x + gx / gl * 0.6 * dt, pz = k.position.z + gz / gl * 0.6 * dt;
-        if (riverDepth(px, pz) >= riverDepth(k.position.x, k.position.z)) { k.position.x = px; k.position.z = pz; }
+        if (open(px, pz) >= open(k.position.x, k.position.z)) { k.position.x = px; k.position.z = pz; }
       }
     }
     k.position.y = waterLevel(k.position.x, k.position.z) ?? k.position.y;
@@ -1811,9 +1945,17 @@ class ThirdPersonControllerManager {
     this.updateRipples(k, dt);
 
     // bobbing on the water, leaning into turns and rocking with the stroke
-    k.tiltPivot.position.y = Math.sin(elapsed * 1.7) * 0.015;
-    k.tiltPivot.rotation.z = -k.turnVel * 0.06 * Math.min(1, Math.abs(k.speed) / 2) + Math.sin(elapsed * 1.3) * 0.012 + roll * 0.03;
-    k.tiltPivot.rotation.x = Math.sin(elapsed * 1.1 + 0.7) * 0.008;
+    // and in the cascades, nosing down each drop and tossed about in the white water below it
+    const bowY = waterLevel(k.position.x + sh * 1.2, k.position.z + ch * 1.2), sternY = waterLevel(k.position.x - sh * 1.2, k.position.z - ch * 1.2);
+    const pitch = bowY != null && sternY != null ? Math.atan((sternY - bowY) / 2.4) : 0;
+    k.pitch = (k.pitch ?? 0) + (pitch - (k.pitch ?? 0)) * Math.min(1, dt * 6);
+    const r = rapid.rough;
+    if (r > 0.05) k.turnVel += Math.sin(elapsed * 5.3) * Math.sin(elapsed * 2.1 + 1) * r * 2.2 * dt;
+    k.tiltPivot.position.y = Math.sin(elapsed * 1.7) * 0.015 + r * Math.sin(elapsed * 7.1) * 0.06;
+    k.tiltPivot.rotation.z = -k.turnVel * 0.06 * Math.min(1, Math.abs(k.speed) / 2) + Math.sin(elapsed * 1.3) * 0.012 + roll * 0.03
+      + r * Math.sin(elapsed * 6.3 + 2) * 0.07;
+    k.tiltPivot.rotation.x = Math.sin(elapsed * 1.1 + 0.7) * 0.008 + k.pitch + r * Math.sin(elapsed * 8.2) * 0.05;
+    if (r > 0.3) rumble(0, r * 0.3, r * 0.5, 0.1);
   }
 
   // A ring on the water at (x, z), of `size` metres across when it has spread, at `strength` (its first opacity)

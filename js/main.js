@@ -27,7 +27,9 @@ import { LightingSystem, sunTimes } from './lighting.js';
 import { createKnockdowns } from './knockdowns.js';
 import { CityMapSystem } from './city-map.js';
 import { setupSceneCulling, updateSceneCulling, cullAlso, showShadowStandIns } from './scene-culling.js';
-import { loadTerrain, setOnTerrain, groundHeight } from './terrain.js';
+import { loadTerrain, setOnTerrain, groundHeight, waterLevel } from './terrain.js';
+import { buildCascades } from './cascades.js';
+import { buildRiverPeople } from './river-people.js';
 import { CityAudioSystem } from './audio-system.js';
 import { fetchWeather, createPrecipitation } from './weather.js';
 import { fetchRiverFlow } from './river-gauge.js';
@@ -170,12 +172,16 @@ async function initApp() {
     // back from what that start saved: terrain.js)
     await setOnTerrain(g.getObjectByName('CityGrid'));
     return made;
-  }, { cull: setupSceneCulling }), { inputs: [heights] });
+  }, { cull: setupSceneCulling }), { inputs: [heights], from: ['js/cascades.js', 'js/river.js', 'js/tsl-materials.js'] });
   const cityGrid = grid.made;
   markInit('cityGrid');
+  // Lamp: the Argo Cascades' rocks and white water, on the steps of their water (cascades.js)
+  const cascadesPart = live.keep('cascades', () => cityPart((g) => buildCascades(g, waterLevel)), { inputs: [heights, grid] });
+  // Lamp: kayakers and tubers on their way down the river from the cascades (river-people.js)
+  const riverPeoplePart = live.keep('riverPeople', () => cityPart((g) => buildRiverPeople(g)), { inputs: [heights, grid] });
   await showLoadingStage('Laying out the hills of Washtenaw County...');
   const outskirtsPart = live.keep('outskirts', () => cityPart((g) => buildOutskirts(g), { cull: setupSceneCulling }),
-    { inputs: [heights, grid] });
+    { inputs: [heights, grid], from: ['js/outskirts.js'] });
   const outskirts = outskirtsPart.made;
   markInit('outskirts');
   await showLoadingStage('Building the Big House...');
@@ -256,7 +262,7 @@ async function initApp() {
   const railPart = live.keep('railways', () => cityPart((g) => buildRailways(g, railCrossings, wolverine)), { inputs: [heights], from: ['data/rail-crossings.json', 'data/wolverine.json'] });
   const railways = railPart.made;
   // Cars parked in the lots and along the main streets downtown, solid to the player (parked-cars.js)
-  const parkedPart = live.keep('parkedCars', () => cityPart((g) => buildParkedCars(g)), { inputs: [heights] });
+  const parkedPart = live.keep('parkedCars', () => cityPart((g) => buildParkedCars(g)), { inputs: [heights], from: ['js/parked-cars.js'] });
   const parkedCars = parkedPart.made;
   allColliders.push(...parkedCars.colliders);
   // Tree trunks, lamp posts, signal poles and sign posts: thin and solid, so the car crashes into them and the bike
@@ -272,7 +278,7 @@ async function initApp() {
     onLand: (it, spin) => audioSystem?.cue(it.kind === 'tree' ? 'thud' : 'crash',
       { x: it.x + it.dx * it.height * 0.6, y: it.g, z: it.z + it.dz * it.height * 0.6 }, Math.min(1, 0.4 + spin * 0.2))
   });
-  const parts = [grid, outskirtsPart, landmarks, blocks, details, traffic, highway, roadPaint, controlsPart, signsPart, railPart, parkedPart];
+  const parts = [grid, cascadesPart, riverPeoplePart, outskirtsPart, landmarks, blocks, details, traffic, highway, roadPaint, controlsPart, signsPart, railPart, parkedPart];
   for (const part of parts) {
     scene.add(part.group);
     cullAlso(part.culled);
@@ -287,6 +293,7 @@ async function initApp() {
   await showLoadingStage('Preparing player, vehicles and controls...');
   const controllerManager = new ThirdPersonControllerManager(scene, allColliders);
   controllerManager.knockdowns = knockdowns;
+  controllerManager.parkedCars = parkedCars;
   const isOwnLook = (look) => look.kind === 'forester' && look.hex === 0x16181b;
   // The cars taken from parking spots and left in them in earlier plays (a part kept over a change has them still)
   if (!parkedCars.history.length) {
@@ -303,8 +310,8 @@ async function initApp() {
     cyclist: { x: 660, z: 529, heading: Math.PI / 2 },
     // high over Stadium Blvd south of the Big House, the stadium below and downtown beyond it
     helicopter: { x: -30, z: 1950, heading: Math.PI, above: 130 },
-    // on the Huron where it comes closest to campus, the Medical Center on its bluff ahead
-    kayak: { x: 760, z: -880, heading: 0.8 }
+    // on Argo Pond just above the Argo Cascades, facing the channel's head where it leaves the pond
+    kayak: { x: 202.9, z: -1266.4, heading: 1.188 }
   };
 
   // Reuse teleport placement so saved players return at rest, close to their last positions.
@@ -317,8 +324,31 @@ async function initApp() {
         if (!controllerManager.entities[mode]) continue;
         controllerManager.setMode(mode);
         controllerManager.teleportActiveTo(s.x, s.z, s.heading, s.above ? groundHeight(s.x, s.z) + s.above : null);
+        // the kayak faces the cascades' channel, not the way the pond's water would turn it
+        if (mode === 'kayak') { const k = controllerManager.entities.kayak; k.heading = s.heading; k.mesh.rotation.y = s.heading; }
       }
       controllerManager.setMode('car');
+      // CRASHTEST (temporary)
+      const tp = parkedCars.nearest(SCENIC_STARTS.car.x, SCENIC_STARTS.car.z, 120);
+      if (tp) {
+        const sn = Math.sin(tp.yaw), cs = Math.cos(tp.yaw);
+        controllerManager.teleportActiveTo(tp.x - sn * 30 - cs * 2, tp.z - cs * 30 + sn * 2, tp.yaw - 0.6);
+        log(`[crashtest] parked ${tp.kind} at ${tp.x.toFixed(1)}, ${tp.z.toFixed(1)} yaw ${tp.yaw.toFixed(2)}`);
+        const hx = tp.x, hz = tp.z, hy = tp.yaw, st = parkedCars.step;
+        let wasMoving = false;
+        parkedCars.step = (dt, solid) => {
+          const out = st(dt, solid);
+          const moving = tp.vx !== 0 || tp.vz !== 0 || tp.w !== 0;
+          if (wasMoving && !moving) log(`[crashtest] ${tp.kind} came to rest ${Math.hypot(tp.x - hx, tp.z - hz).toFixed(2)} m from its spot, turned ${(tp.yaw - hy).toFixed(2)}; drawn ${!!tp.slot}`);
+          wasMoving = moving;
+          return out;
+        };
+        const rc = controllerManager.reportCollision.bind(controllerManager);
+        controllerManager.reportCollision = (a, b, kind, x, y, z, nx, ny, nz, speed) => {
+          if (speed > 1.5) log(`[crashtest] ${kind} hit at ${speed.toFixed(1)} m/s; car speed ${a.speed?.toFixed(1)} spin ${a.angularVel?.toFixed(2)}${b?.vx !== undefined && b.mass ? `; parked now ${b.x.toFixed(1)}, ${b.z.toFixed(1)} v ${Math.hypot(b.vx, b.vz).toFixed(1)} spin ${b.w.toFixed(2)}` : ''}`);
+          rc(a, b, kind, x, y, z, nx, ny, nz, speed);
+        };
+      }
     }
     if (saved?.version === 2) {
       for (const mode of Object.keys(controllerManager.entities)) {
@@ -1117,6 +1147,8 @@ async function initApp() {
     gamepadControls.supply(f.pads[0]);
     gamepadControls.update(dt);
     controllerManager.update(dt, elapsed, cameraSystem.initialized ? cameraSystem.currentPos : null);
+    // parked cars a crash shoved, sliding to a stop (parked-cars.js), and found where they are now
+    for (const col of parkedCars.step(dt, (p) => controllerManager.settleParked(p))) controllerManager.refreshCollider(col);
     cameraSystem.update(dt, elapsed);
     streetDetails.signalClock.value = elapsed;
     controlsPart.made.update(elapsed);
@@ -1133,6 +1165,7 @@ async function initApp() {
     mark('highway');
     railways.update(dt, (at) => audioSystem.trainHorn(at));
     parkedCars.update(cameraSystem.camera);
+    riverPeoplePart.made.update(dt, elapsed, cameraSystem.currentPos);
     mark('trains & parked');
     const kayak = controllerManager.entities.kayak;
     if (kayak.strokes !== heardStrokes) {

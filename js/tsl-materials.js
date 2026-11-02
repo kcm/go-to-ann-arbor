@@ -65,6 +65,7 @@ import {
   streetZ
 } from './city-config.js';
 import { groundHeightNode } from './terrain.js';
+import { CASCADE_WAVES } from './cascades.js';
 import { hot } from '../lamp-game.js';
 
 // Procedural city materials: facades and interiors, vegetation, roads, water and lighting effects.
@@ -2863,6 +2864,50 @@ const disturbSlope = (p) => {
   return slope;
 };
 
+// The Argo Cascades' rapids, in the water itself: below each weir, standing waves down the chute's tongue, a boil of
+// chop carried off downstream, and white water pouring over the rocks, breaking on the waves' crests and trailing off
+// in streaks. vec4(slope x, slope z, foam 0-1, height of the surface over the water's level). Only in the cascades'
+// box, so the rest of the river pays nothing for it.
+// smoothstep falling from 1 at `a` to 0 at `b` (a > b): WebGL's own is undefined with its edges that way round
+const fall = (a, b, x) => float(1).sub(smoothstep(b, a, x));
+const rapidsField = Fn(([p]) => {
+  const sx = float(0).toVar(), sz = float(0).toVar(), white = float(0).toVar(), lift = float(0).toVar();
+  If(p.x.greaterThan(250).and(p.x.lessThan(650)).and(p.y.greaterThan(-1260)).and(p.y.lessThan(-1040)), () => {
+    const e = (x) => exp2(x.mul(1.4427));
+    for (const w of CASCADE_WAVES) {
+      const t = vec2(w.tx, w.tz), n = vec2(-w.tz, w.tx);
+      const d = p.sub(vec2(w.x, w.z));
+      const ds = dot(d, t), lat = dot(d, n);
+      const inside = fall(w.half, w.half - 1.5, abs(lat.add(w.gap))).mul(smoothstep(-1.4, -0.5, ds)).mul(fall(13, 7, ds));
+      If(inside.greaterThan(0), () => {
+        const chute = fall(4.0, 1.2, abs(lat));
+        const after = smoothstep(0.2, 1.2, ds).mul(e(ds.sub(1).max(0).mul(-0.2)));
+        // the tongue's standing waves, about 1.8 m apart, still in the water but for a slight surge
+        const k = 2 * Math.PI / 1.8;
+        const phase = ds.mul(k).add(sin(time.mul(1.3)).mul(0.35));
+        const A = chute.mul(after).mul(0.17).mul(cos(lat.mul(2.4)).mul(0.25).add(0.75)).mul(inside);
+        // the boil: short chop running downstream with the current, everywhere below the drop
+        const k2 = 2 * Math.PI / 0.9;
+        const run = ds.sub(time.mul(2.4)).mul(k2), side = lat.mul(3.1).add(ds.mul(1.7)).sub(time.mul(1.6));
+        const B = after.mul(mix(float(0.07), float(0.04), chute)).mul(inside);
+        lift.addAssign(A.mul(cos(phase)).add(B.mul(cos(run)).mul(cos(side))));
+        const along = A.mul(k).mul(sin(phase)).negate().sub(B.mul(k2).mul(sin(run)).mul(cos(side)));
+        const across = B.mul(3.1).mul(cos(run)).mul(sin(side)).negate();
+        sx.addAssign(along.mul(w.tx).sub(across.mul(w.tz)));
+        sz.addAssign(along.mul(w.tz).add(across.mul(w.tx)));
+        // the white water
+        const streaks = noise2D(vec2(lat.mul(1.3), ds.sub(time.mul(2.2)).mul(0.9))).mul(0.6)
+          .add(noise2D(vec2(lat.mul(3.1), ds.sub(time.mul(2.2)).mul(2.3)).add(17.3)).mul(0.4));
+        const pour = smoothstep(-0.6, 0.1, ds).mul(fall(2.4, 0.8, ds)).mul(mix(float(0.95), float(0.4), chute)).mul(streaks.mul(0.5).add(0.6));
+        const crest = smoothstep(0.35, 0.95, cos(phase)).mul(A).mul(5.5).mul(streaks.mul(0.6).add(0.5));
+        const trail = smoothstep(1.0, 2.5, ds).mul(e(ds.mul(-0.22))).mul(mix(float(0.55), float(0.9), chute)).mul(smoothstep(0.42, 0.8, streaks));
+        white.assign(max(white, max(pour, max(crest, trail)).mul(inside).min(0.95)));
+      });
+    }
+  });
+  return vec4(sx, sz, white, lift);
+});
+
 function createWaterMaterial() {
   const mat = new THREE.MeshStandardNodeMaterial({
     metalness: 0.0,
@@ -2880,6 +2925,11 @@ function createWaterMaterial() {
     [8.7, 4.07, 0.064],
     [3.3, 2.71, 0.064]
   ];
+
+  // the Argo Cascades' rapids: the surface raised and lowered by their waves, white where they break
+  const rapids = rapidsField(positionWorld.xz);
+  const foam = rapids.z;
+  mat.positionNode = positionLocal.add(vec3(0, rapidsField(positionLocal.xz).w, 0));
 
   // vec4(mean slope x, mean slope z, unresolved slope variance, crest height)
   const waves = Fn(() => {
@@ -2909,6 +2959,7 @@ function createWaterMaterial() {
       crest.addAssign(smp.w.mul(sigma));
     }
     slope.addAssign(disturbSlope(p));
+    slope.addAssign(rapids.xy);
     return vec4(slope, variance, crest.mul(4.0));
   })();
 
@@ -2916,15 +2967,17 @@ function createWaterMaterial() {
   const variance = waves.z;
   // Fountain rims & other non-horizontal faces keep their own normal
   const flatTop = smoothstep(0.5, 0.9, normalWorldGeometry.y);
-  const waterNormal = normalize(mix(normalWorldGeometry, vec3(slope.x.negate(), 1.0, slope.y.negate()), flatTop));
+  // the surface's own tilt (the cascades' drops) under the waves
+  const tilt = normalWorldGeometry.xz.div(max(normalWorldGeometry.y, 0.3));
+  const waterNormal = normalize(mix(normalWorldGeometry, vec3(slope.x.negate().add(tilt.x), 1.0, slope.y.negate().add(tilt.y)), flatTop));
   mat.normalNode = cameraViewMatrix.transformDirection(waterNormal);
 
   // GGX alpha ≈ RMS slope of the unresolved waves (Beckmann m), roughness = sqrt(alpha); murkier ponds a touch duller
-  mat.roughnessNode = clamp(pow(variance, 0.25).add(pond.mul(0.05)), 0.08, 0.65);
+  mat.roughnessNode = max(clamp(pow(variance, 0.25).add(pond.mul(0.05)), 0.08, 0.65), foam.mul(0.85));
 
   const viewDir = normalize(cameraPosition.sub(positionWorld));
   const fresnel = pow(float(1.0).sub(clamp(dot(waterNormal, viewDir), 0.0, 1.0)), 5.0).mul(0.98).add(0.02);
-  mat.metalnessNode = clamp(fresnel.mul(1.6), 0.0, 0.9);
+  mat.metalnessNode = clamp(fresnel.mul(1.6), 0.0, 0.9).mul(float(1).sub(foam));
 
   // Sediment-laden estuary: deep blue-green grey ↔ silty olive grey; thin sunlit crests transmit a greener tint
   mat.colorNode = Fn(() => {
@@ -2932,7 +2985,7 @@ function createWaterMaterial() {
     const body = mix(color(0x162d2c), color(0x2e3f36), smoothstep(0.25, 0.85, silt));
     const lake = mix(color(0x2f4a3e), color(0x41583f), silt); // the Huron: clear green over its silt
     const crestTint = smoothstep(0.6, 2.4, waves.w).mul(0.35).add(1.0);
-    return mix(body, lake, pond).mul(crestTint);
+    return mix(mix(body, lake, pond).mul(crestTint), color(0xdfe8e4), foam);
   })();
 
   // Night: the lit city seen along the reflected ray. The town is a stack of boxes inscribed in its edge, with a row of

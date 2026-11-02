@@ -65,6 +65,7 @@ import { buildPlaygrounds } from './playgrounds.js';
 import { buildGolf, buildTrails } from './golf.js';
 import { buildRiver } from './river.js';
 import { riverDepth, drawOver } from './terrain.js';
+import { cascadeGaps } from './cascades.js';
 
 // Live construction data consumed by the building and street-detail builders after buildCityGrid().
 let bigParkClearings;
@@ -1848,7 +1849,7 @@ function buildCityGrid(scene) {
   // Their painted stalls (parking-stripes.js)
   if (stripeGeos.length) mergeInto(stripeGeos, createStripeMaterial());
   // The river sunk into its banks, with its bridges (river.js)
-  buildRiver(group, WATER_POLYGONS.map((rings) => flatGeo(rings, 0)), waterMat);
+  buildRiver(group, [...WATER_POLYGONS, ...cascadeGaps()].map((rings) => flatGeo(rings, 0)), waterMat);
   // Woods (kind 0: oaks & maples, close together), park and cemetery trees (1) and yard trees (2)
   const W = GEO.woods;
   for (let i = 0; i < W.length; i += 3) {

@@ -4,17 +4,19 @@ import { PARKING_LOTS } from './city-config.js';
 import { BODY_SPECS, buildCarGeometry, buildCarProxyGeometry, buildSteerableWheelGeo, createLoftedCarMaterial, annArborCar } from './cars.js';
 import { groundHeight, groundTilt } from './terrain.js';
 import { curbStalls } from './curb-parking.js';
+import { vehicleContact, resolveVehicleContact } from './vehicle-physics.js';
 
 // Parked cars: about two in three stalls of every surface parking lot (in the stalls parking-stripes.js paints: rows
 // off the lot's longest edge, back to back every 18 m), and the curb lanes of the main streets downtown, around campus
-// and in Kerrytown where the street is wide enough beside its traffic lanes. They never move: each is a solid box to
-// the player, drawn with the traffic's car models, in full near the camera and as the light stand-in further off,
+// and in Kerrytown where the street is wide enough beside its traffic lanes. Each is a solid box to the player, a body
+// of its own weight that a car hitting it shoves along and spins (handbrake on, so it slides to a stop: step()), drawn with the traffic's car models, in full near the camera and as the light stand-in further off,
 // re-sorted a few times a second around wherever the camera is.
 
 const STALL_W = 2.7, MODULE = 18;
 const NEAR = 70, FAR = 650;
 const LAWN_Y = 0.284; // Lamp: the driveways' height (city-grid.js, LAWN_Y + 0.004)
 
+const MASS = { sedan: 1600, suv: 2100, minivan: 2000, pickup: 2400, van: 2700, sports: 1450 };
 const KINDS = ['sedan', 'sedan', 'suv', 'sedan', 'suv', 'minivan', 'suv', 'pickup', 'sedan', 'suv', 'van', 'sedan', 'suv', 'pickup', 'sports'];
 const hash = (x, z, k = 0) => { const v = Math.sin(x * 12.9898 + z * 78.233 + k * 37.719) * 43758.5453; return v - Math.floor(v); };
 
@@ -115,7 +117,8 @@ function buildParkedCars(group) {
     const cx = s.x + sn * mid, cz = s.z + cs * mid;
     const ex = Math.abs(cs) * hx + Math.abs(sn) * hz, ez = Math.abs(sn) * hx + Math.abs(cs) * hz;
     car.collider = { minX: cx - ex, maxX: cx + ex, minZ: cz - ez, maxZ: cz + ez, minY: g + car.y, maxY: g + car.y + 1.6,
-      obb: { cx, cz, hx, hz, cs, sn } };
+      obb: { cx, cz, hx, hz, cs, sn }, parked: car };
+    Object.assign(car, { mid, halfL: hz, halfW: hx, mass: MASS[kind] ?? 1600, vx: 0, vz: 0, w: 0 });
     colliders.push(car.collider);
     return car;
   };
@@ -125,18 +128,27 @@ function buildParkedCars(group) {
     (byKind[kind] ||= []).push(record(s, kind, look.hex, look.style));
   }
 
-  const matrixOf = (c) => new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(-c.pitch, c.yaw, -c.roll, 'YXZ'))
+  const euler = new THREE.Euler(), quat = new THREE.Quaternion(), wpos = new THREE.Vector3(), wscale = new THREE.Vector3();
+  const matrixOf = (c, m = new THREE.Matrix4()) => m.makeRotationFromEuler(euler.set(-c.pitch, c.yaw, -c.roll, 'YXZ'))
     .setPosition(c.x, c.g + c.y, c.z);
   // the full model's wheels are drawn on their own, as the traffic's are: the sedan's wheel scaled to this kind's
-  const wheelsOf = (c) => {
+  const wheelsOf = (c, out = null) => {
     const spec = BODY_SPECS[c.kind];
     const r = spec.wheelRadius, sc = r / 0.35, cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
-    const out = [];
+    const fresh = !out;
+    if (fresh) out = [];
+    let i = 0;
     for (const side of [-1, 1]) {
       for (const wz of [spec.wheelZ, -spec.wheelZ]) {
         const x = c.x + side * spec.wheelX * cs + wz * sn, z = c.z - side * spec.wheelX * sn + wz * cs;
-        out.push(new THREE.Matrix4().compose(new THREE.Vector3(x, groundHeight(x, z) + c.y + r, z),
-          new THREE.Quaternion().setFromEuler(new THREE.Euler(hash(x, z, 9) * 6, c.yaw, -c.roll, 'YXZ')), new THREE.Vector3(sc, sc, sc)));
+        // each wheel keeps the turn it was parked at (shoved sideways, it slides rather than rolls)
+        c.spins ??= [];
+        c.spins[i] ??= hash(x, z, 9) * 6;
+        const m = fresh ? new THREE.Matrix4() : out[i];
+        m.compose(wpos.set(x, groundHeight(x, z) + c.y + r, z), quat.setFromEuler(euler.set(c.spins[i], c.yaw, -c.roll, 'YXZ')),
+          wscale.set(sc, sc, sc));
+        if (fresh) out.push(m);
+        i++;
       }
     }
     return out;
@@ -161,7 +173,7 @@ function buildParkedCars(group) {
       group.add(m);
       return m;
     };
-    return { kind, capacity, cars, matrices: cars.map(matrixOf), wheels: cars.map(wheelsOf),
+    return { kind, capacity, cars, matrices: cars.map((c) => matrixOf(c)), wheels: cars.map((c) => wheelsOf(c)),
       near: make(buildCarGeometry(spec, false)), far: make(buildCarProxyGeometry(spec)) };
   };
   const sets = Object.entries(byKind).map(([kind, cars]) => setFor(kind, cars));
@@ -180,6 +192,7 @@ function buildParkedCars(group) {
 
   const put = (mesh, i, set, k) => {
     const n = mesh.count++;
+    set.cars[k].slot = mesh; set.cars[k].n = n;
     mesh.setMatrixAt(n, set.matrices[k]);
     const c = set.cars[k];
     mesh.geometry.attributes.paintColor.array.set(c.paint, n * 3);
@@ -196,12 +209,14 @@ function buildParkedCars(group) {
       set.near.count = 0; set.far.count = 0;
       for (let k = 0; k < set.cars.length; k++) {
         const c = set.cars[k];
+        c.slot = null; c.wn = -1; c.set = set; c.k = k;
         if (c.gone) continue;
         const d2 = (c.x - px) ** 2 + (c.z - pz) ** 2;
         if (d2 > far2) continue;
         put(d2 < near2 ? set.near : set.far, 0, set, k);
         if (d2 < near2 && wheelL.count + 2 <= wheelL.instanceMatrix.count) {
           const w = set.wheels[k];
+          c.wn = wheelL.count;
           wheelL.setMatrixAt(wheelL.count++, w[0]); wheelL.setMatrixAt(wheelL.count++, w[1]);
           wheelR.setMatrixAt(wheelR.count++, w[2]); wheelR.setMatrixAt(wheelR.count++, w[3]);
         }
@@ -227,6 +242,97 @@ function buildParkedCars(group) {
       }
     }
     return best;
+  }
+
+  // Cars shoved by a crash: each slides on its locked wheels (about 0.45 g: in park, not braked) and its spin dies down, knocks the parked cars
+  // it runs into the same way, and is drawn where it is now. `wake` sets one going (its vx, vz and w already set);
+  // `solid(car)` pushes it out of the buildings and posts around it. Says the boxes that moved, for the player's
+  // colliders.
+  const rolling = new Set(), moved = [];
+  const bodyA = {}, bodyB = {}, hit = {};
+  const readBody = (c, b) => {
+    const o = c.collider.obb;
+    b.x = o.cx; b.z = o.cz; b.sin = o.sn; b.cos = o.cs;
+    b.halfW = c.halfW; b.halfL = c.halfL; b.mass = c.mass;
+    b.vx = c.vx; b.vz = c.vz; b.angularVel = c.w;
+  };
+  // move the box's centre by (dx, dz) and turn it by dYaw, keeping the car's pose, box and drawing together
+  function place(c, dx, dz, dYaw) {
+    const o = c.collider.obb;
+    o.cx += dx; o.cz += dz;
+    c.yaw += dYaw;
+    o.cs = Math.cos(c.yaw); o.sn = Math.sin(c.yaw);
+    c.x = o.cx - o.sn * c.mid; c.z = o.cz - o.cs * c.mid;
+    const ex = Math.abs(o.cs) * o.hx + Math.abs(o.sn) * o.hz, ez = Math.abs(o.sn) * o.hx + Math.abs(o.cs) * o.hz;
+    const col = c.collider;
+    col.minX = o.cx - ex; col.maxX = o.cx + ex; col.minZ = o.cz - ez; col.maxZ = o.cz + ez;
+    c.dirty = true;
+  }
+  function wake(c) {
+    if (!c.gone) rolling.add(c);
+  }
+  function step(dt, solid) {
+    moved.length = 0;
+    if (!rolling.size) return moved;
+    for (const c of rolling) {
+      if (c.gone) { rolling.delete(c); continue; }
+      const sp = Math.hypot(c.vx, c.vz);
+      const slow = Math.max(0, sp - 4.5 * dt) / (sp || 1);
+      c.vx *= slow; c.vz *= slow;
+      c.w = Math.sign(c.w) * Math.max(0, Math.abs(c.w) - 3.2 * dt) * Math.exp(-1.5 * dt);
+      place(c, c.vx * dt, c.vz * dt, c.w * dt);
+      // the parked cars beside it
+      readBody(c, bodyA);
+      const reach = c.halfL * 2 + 1;
+      for (const set of sets) {
+        for (const o of set.cars) {
+          if (o === c || o.gone || Math.abs(o.x - c.x) > reach || Math.abs(o.z - c.z) > reach) continue;
+          readBody(o, bodyB);
+          if (!vehicleContact(bodyA, bodyB, hit)) continue;
+          const share = o.mass / (c.mass + o.mass);
+          place(c, hit.nx * hit.depth * share, hit.nz * hit.depth * share, 0);
+          place(o, -hit.nx * hit.depth * (1 - share), -hit.nz * hit.depth * (1 - share), 0);
+          readBody(c, bodyA);
+          readBody(o, bodyB);
+          if (resolveVehicleContact(bodyA, bodyB, hit) > 0) {
+            c.vx = bodyA.vx; c.vz = bodyA.vz; c.w = bodyA.angularVel;
+            o.vx = bodyB.vx; o.vz = bodyB.vz; o.w = bodyB.angularVel;
+            rolling.add(o);
+          }
+          moved.push(o.collider);
+        }
+      }
+      if (solid) { solid(c); place(c, 0, 0, 0); }
+      moved.push(c.collider);
+      if (Math.abs(c.vx) < 0.03 && Math.abs(c.vz) < 0.03 && Math.abs(c.w) < 0.03) {
+        c.vx = c.vz = c.w = 0;
+        rolling.delete(c);
+      }
+    }
+    // drawn where they are now, on the ground there
+    for (const col of moved) {
+      const c = col.parked;
+      if (!c.dirty) continue;
+      c.dirty = false;
+      c.g = groundHeight(c.x, c.z);
+      [c.pitch, c.roll] = groundTilt(c.x, c.z, c.yaw);
+      col.minY = c.g + c.y; col.maxY = c.g + c.y + 1.6;
+      if (!c.set) continue;
+      matrixOf(c, c.set.matrices[c.k]);
+      wheelsOf(c, c.set.wheels[c.k]);
+      if (c.slot) {
+        c.slot.setMatrixAt(c.n, c.set.matrices[c.k]);
+        c.slot.instanceMatrix.needsUpdate = true;
+      }
+      if (c.wn >= 0) {
+        const w = c.set.wheels[c.k];
+        wheelL.setMatrixAt(c.wn, w[0]); wheelL.setMatrixAt(c.wn + 1, w[1]);
+        wheelR.setMatrixAt(c.wn, w[2]); wheelR.setMatrixAt(c.wn + 1, w[3]);
+        wheelL.instanceMatrix.needsUpdate = true;
+        wheelR.instanceMatrix.needsUpdate = true;
+      }
+    }
+    return moved;
   }
 
   // The player takes `car` and leaves their own (`drop`: { kind, hex, style, x, z, yaw, y }) parked where it stood. Says
@@ -270,7 +376,7 @@ function buildParkedCars(group) {
   }
 
   console.info(`[parked] ${spots.length} parked cars, ${spots.filter((s) => s.street).length} on the streets`);
-  return { group, colliders, update, count: spots.length, nearest, take, replay, history };
+  return { group, colliders, update, step, wake, count: spots.length, nearest, take, replay, history };
 }
 
 export { buildParkedCars };

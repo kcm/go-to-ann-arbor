@@ -88,7 +88,12 @@ function buildOutskirts(scene) {
   for (let j = 0; j < fnz; j++) {
     for (let i = 0; i < fnx; i++) {
       const x = fx0 + i * FS, z = fz0 + j * FS, k = (j * fnx + i) * 3;
-      fpos[k] = x; fpos[k + 1] = groundHeight(x, z) - 0.9; fpos[k + 2] = z;
+      // by the Argo Cascades, the lowest ground around, so it stays under their narrow, deep channel between points
+      let y = groundHeight(x, z);
+      if (x > 100 && x < 700 && z > -1320 && z < -1000) {
+        for (let u = -FS; u <= FS; u += FS / 2) for (let v = -FS; v <= FS; v += FS / 2) y = Math.min(y, groundHeight(x + u, z + v));
+      }
+      fpos[k] = x; fpos[k + 1] = y - 0.9; fpos[k + 2] = z;
     }
   }
   const fidx = new Uint32Array((fnx - 1) * (fnz - 1) * 6);
