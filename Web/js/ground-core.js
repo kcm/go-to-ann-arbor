@@ -155,7 +155,7 @@ export function tessellateLayer(layer, tolerance, minEdge, h) {
 // layer's own position array is raised in place when it isn't cut.
 export function drapeLayer(g, layer, tolerance) {
   const h = (x, z) => groundOf(g, x, z);
-  const out = tolerance ? tessellateLayer(layer, tolerance, 10, h) : layer;
+  const out = tolerance ? tessellateLayer(layer, tolerance, 5, h) : layer;
   const pos = out.attrs.find((a) => a.name === 'position').array;
   for (let i = 0; i < pos.length; i += 3) pos[i + 1] += h(pos[i], pos[i + 2]);
   return out;

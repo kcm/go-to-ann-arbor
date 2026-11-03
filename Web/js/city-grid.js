@@ -1523,7 +1523,7 @@ function buildCityGrid(scene) {
   // Unified Roadway Asphalt Deck (Y = 0.0) filling the town's edge
   const roadMat = createRoadSurfaceMaterial();
   const roadMesh = createFlatPolygonMesh(TOWN_EDGE, 0.0, roadMat, true);
-  roadMesh.userData.terrainTolerance = 0.16; // Lamp: as the other ground layers; the road markings sit 10 cm over it (road-paint.js)
+  roadMesh.userData.terrainTolerance = 0.06; // Lamp: as the other ground layers; the road markings sit 8 cm over it (road-paint.js)
   group.add(roadMesh);
 
   // =========================================================================
@@ -1753,9 +1753,9 @@ function buildCityGrid(scene) {
     geo.translate(0, y, 0);
     return geo;
   };
-  // Lamp: 12 cm over the sidewalk's slab (SW_TOP) under it, so with coarser terrain subdivision (0.16 m tolerance)
+  // Lamp: 8 cm over the sidewalk's slab (SW_TOP) under it, so with 0.06 m terrain subdivision tolerance
   // the slab won't show through the grass as wedges of concrete
-  const LAWN_Y = 0.34;
+  const LAWN_Y = 0.30;
   const hashDrive = (x, z) => { const v = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453; return v - Math.floor(v); };
   const drivewayConcreteMat = new THREE.MeshStandardNodeMaterial({ color: 0xa29e96, roughness: 0.93 });
   // a home's blacktop: a weathered mid gray, so it reads as a driveway beside the lawn rather than a hole in it
