@@ -753,7 +753,6 @@ function buildHouses(records, addresses = null, { quiet = false } = {}) {
     const ring = ringArea(ring0) < 0 ? [...ring0].reverse() : ring0; // counter-clockwise in x, z: walls face out
     const fb = orientedBox(ring);
     const area = Math.abs(ringArea(ring));
-    const g = r.ground ?? 0;
     const garage = r.garage || area < 45;
     const id = (k) => hash(r.cx, r.cz, k);
     const historic = !garage && historicDistrictAt(r.cx, r.cz) !== null;
@@ -768,6 +767,27 @@ function buildHouses(records, addresses = null, { quiet = false } = {}) {
     const rects = garage ? [{ u0: -fb.L / 2, u1: fb.L / 2, v0: -fb.W / 2, v1: fb.W / 2 }] : decompose(loc, fb.L, fb.W);
     const M = rects[0], wingRects = rects.slice(1);
     wings += wingRects.length;
+
+    // Sample both the highest and lowest terrain across the decomposed house rectangles and polygon vertices so
+    // hillside houses always set their first-floor sill `g + fh` above the uphill lawn (`LAWN_Y = 0.28`) while
+    // extending their masonry foundation skirt (`base`) down below the downhill lawn.
+    let minG = r.minGround ?? groundHeight(r.cx, r.cz);
+    let maxG = groundHeight(r.cx, r.cz);
+    for (const p of ring) {
+      const h0 = groundHeight(p.x, p.z);
+      if (h0 < minG) minG = h0;
+      if (h0 > maxG) maxG = h0;
+    }
+    for (const R of rects) {
+      for (const u of [R.u0, (R.u0 + R.u1) * 0.5, R.u1]) {
+        for (const v of [R.v0, (R.v0 + R.v1) * 0.5, R.v1]) {
+          const pt = P(u, v), h0 = groundHeight(pt.x, pt.z);
+          if (h0 < minG) minG = h0;
+          if (h0 > maxG) maxG = h0;
+        }
+      }
+    }
+    const g = Math.max(r.ground ?? 0, maxG + 0.28);
 
     // Storeys from the surveyed height (the LiDAR roof average, which reads low), a storey and a half where the
     // second floor lives under the roof
@@ -893,7 +913,7 @@ function buildHouses(records, addresses = null, { quiet = false } = {}) {
 
     // Roofs first (they say where the soffits are), then the walls under them
     const frames = rects.map((R, k) => roofOf(hc, R, roofSpecs[k]));
-    const base = g - 0.6;
+    const base = Math.min(r.minGround ?? g, minG, g) - 0.6;
     rects.forEach((R, k) => {
       const spec = roofSpecs[k], F = frames[k];
       const endSides = spec.type === 'hip' || spec.type === 'flat' ? [] : spec.along === 'u' ? [1, 3] : [0, 2];
@@ -968,7 +988,7 @@ function buildHouses(records, addresses = null, { quiet = false } = {}) {
       if ((type === 'gable' || type === 'gambrel') && !endFacesFront) {
         const b = MF.hb * 0.3 * (id(16) < 0.5 ? -1 : 1);
         const p3 = MF.W(sgn * (MF.ha + 0.32), b, 0), p = { x: p3[0], z: p3[2] };
-        addBox(c, p, MF.bDir.x, MF.bDir.z, 1.1, 0.62, g - 0.3, MF.top - 0.4, chim);
+        addBox(c, p, MF.bDir.x, MF.bDir.z, 1.1, 0.62, base, MF.top - 0.4, chim);
         addBox(c, p, MF.bDir.x, MF.bDir.z, 0.72, 0.6, MF.top - 0.4, ridgeY + 0.7, chim);
         addBox(c, p, MF.bDir.x, MF.bDir.z, 0.84, 0.72, ridgeY + 0.7, ridgeY + 0.82, capRGB);
       } else {
@@ -1004,7 +1024,8 @@ function buildHouses(records, addresses = null, { quiet = false } = {}) {
         const ph = Math.min(deckY + 2.65, blockSoffit - 0.45);
         outD = pd;
         // the deck on its skirt, the ceiling, posts (on brick piers on a craftsman porch), beams
-        addBox(c, Q(doorT, pd / 2), dir.x, dir.z, pw, pd, g - 0.4, deckY - 0.1, matKind === M_BRICK ? hc.sc : lin(0x6d6a64));
+        const skirtBase = Math.min(base, groundHeight(Q(t0, pd).x, Q(t0, pd).z) - 0.4, groundHeight(Q(t1, pd).x, Q(t1, pd).z) - 0.4);
+        addBox(c, Q(doorT, pd / 2), dir.x, dir.z, pw, pd, skirtBase, deckY - 0.1, matKind === M_BRICK ? hc.sc : lin(0x6d6a64));
         addBox(c, Q(doorT, pd / 2 + 0.03), dir.x, dir.z, pw + 0.08, pd + 0.06, deckY - 0.1, deckY, lin(DECK));
         const nPosts = pw > 6.2 ? 4 : 2;
         for (let k = 0; k < nPosts; k++) {
@@ -1039,30 +1060,39 @@ function buildHouses(records, addresses = null, { quiet = false } = {}) {
         // shrubs either side of the steps, and at the porch's ends
         for (const s of [-1, 1]) {
           const p = Q(doorT + s * (sw / 2 + 0.75), pd + 0.6);
-          shrubs.push(p.x, groundHeight(p.x, p.z), p.z, 0.5 + id(24 + s) * 0.3, ...lin(pick(SHRUBS, id(26 + s))));
+          shrubs.push(p.x, groundHeight(p.x, p.z) + 0.28, p.z, 0.5 + id(24 + s) * 0.3, ...lin(pick(SHRUBS, id(26 + s))));
           const t = s < 0 ? t0 - 0.9 : t1 + 0.9;
           if (t > 0.6 && t < S.L - 0.6) {
             const q = Q(t, 0.8);
-            shrubs.push(q.x, groundHeight(q.x, q.z), q.z, 0.6 + id(28 + s) * 0.35, ...lin(pick(SHRUBS, id(29 + s))));
+            shrubs.push(q.x, groundHeight(q.x, q.z) + 0.28, q.z, 0.6 + id(28 + s) * 0.35, ...lin(pick(SHRUBS, id(29 + s))));
           }
         }
       } else {
         // a stoop: a landing at the door
         outD = 1.3;
-        addBox(c, Q(doorT, 0.65), dir.x, dir.z, 1.9, 1.3, g - 0.3, deckY, lin(CONCRETE));
+        const stoopP = Q(doorT, 0.65);
+        const stoopBase = Math.min(base, groundHeight(stoopP.x, stoopP.z) - 0.4);
+        addBox(c, stoopP, dir.x, dir.z, 1.9, 1.3, stoopBase, deckY, lin(CONCRETE));
         for (const s of [-1, 1]) for (const t of [doorT + s * 1.9, doorT + s * 3.4]) {
           if (t < 0.6 || t > S.L - 0.6) continue;
           const p = Q(t, 0.75);
-          shrubs.push(p.x, groundHeight(p.x, p.z), p.z, 0.45 + id(31 + t) * 0.3, ...lin(pick(SHRUBS, id(33 + t))));
+          shrubs.push(p.x, groundHeight(p.x, p.z) + 0.28, p.z, 0.45 + id(31 + t) * 0.3, ...lin(pick(SHRUBS, id(33 + t))));
         }
       }
-      // steps down from the porch or stoop
+      // steps down from the porch or stoop to the sloped lawn
       const stepRGB = hasPorch ? lin(DECK) : lin(CONCRETE);
-      for (let k = 1; k <= nSteps; k++) {
+      let stepsUsed = 0;
+      for (let k = 1; k <= 20; k++) {
         const top = deckY - k * riser;
-        if (top <= g + 0.02) break;
         const p = Q(doorT, outD + (k - 0.5) * 0.3);
-        steps.push(p.x, g - 0.3, p.z, yaw, sw, top - (g - 0.3), 0.3, ...stepRGB);
+        const pL = Q(doorT - sw * 0.5, outD + (k - 0.5) * 0.3);
+        const pR = Q(doorT + sw * 0.5, outD + (k - 0.5) * 0.3);
+        const lawnMinAtStep = Math.min(groundHeight(p.x, p.z), groundHeight(pL.x, pL.z), groundHeight(pR.x, pR.z)) + 0.28;
+        if (k > 1 && top <= lawnMinAtStep - 0.04) break;
+        const stepBase = Math.min(lawnMinAtStep - 0.35, top - riser - 0.35);
+        steps.push(p.x, stepBase, p.z, yaw, sw, top - stepBase, 0.3, ...stepRGB);
+        stepsUsed = k;
+        if (top <= lawnMinAtStep + 0.06) break;
       }
       // the porch light by the door and the house number on the other side
       const lp = Q(doorT - 0.9, 0.08);
@@ -1075,7 +1105,7 @@ function buildHouses(records, addresses = null, { quiet = false } = {}) {
         }
       }
       // a front walk from the steps to the sidewalk, following the ground
-      const startD = outD + nSteps * 0.3;
+      const startD = outD + (stepsUsed || nSteps) * 0.3;
       const s0 = Q(doorT, startD);
       const toStreet = distanceToStreet(s0.x, s0.z, N.x, N.z);
       const walkLen = toStreet - 2.0;
@@ -1084,7 +1114,7 @@ function buildHouses(records, addresses = null, { quiet = false } = {}) {
         for (let k = 0; k < n; k++) {
           const d0 = startD + (walkLen * k) / n, d1 = startD + (walkLen * (k + 1)) / n;
           const p = [Q(doorT - 0.6, d0), Q(doorT + 0.6, d0), Q(doorT + 0.6, d1), Q(doorT - 0.6, d1)]
-            .map((q) => [q.x, groundHeight(q.x, q.z) + 0.05, q.z]);
+            .map((q) => [q.x, groundHeight(q.x, q.z) + 0.31, q.z]);
           sQuad(c, p[0], p[1], p[2], p[3], walkRGB);
         }
       }

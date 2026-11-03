@@ -28,9 +28,10 @@ function createBuildingFootprints(material, records, getNeighbours) {
     const key = Math.floor(record.cx / 1000) + ',' + Math.floor(record.cz / 1000);
     let cell = cells.get(key);
     if (!cell) cells.set(key, (cell = { positions: [], normals: [], indices: [], boxes: [], walls: [], ground: [] }));
-    // Lamp: the building stands on `record.ground` (terrain.js); its storeys count from there
-    const g = record.ground ?? 0;
-    const height = record.height, base = g + 0.22, top = g + height + 0.22;
+    // Lamp: the building stands on `record.ground` (terrain.js); its storeys count from there, while `base` reaches
+    // down below `record.minGround` on hillsides
+    const g = record.ground ?? 0, minG = record.minGround ?? g;
+    const height = record.height, base = Math.min(minG, g) - 0.4, top = g + height + 0.22, spanY = top - base;
     const seed = Math.floor(record.seed ?? index * 29) % 1000 + 0.1 + 0.8 * (record.tone ?? 0.5);
     const neighbours = getNeighbours && height <= 60 ? getNeighbours(record) : [];
 
@@ -60,7 +61,7 @@ function createBuildingFootprints(material, records, getNeighbours) {
             cell.normals.push(-dz / width, 0, dx / width);
             // Footprint walls use the box's unused depth for the exposed height above adjoining roofs.
             cell.boxes.push(width, height, exposedHeight, seed);
-            cell.walls.push(reverse ? 1 - k % 2 : k % 2, k < 2 ? height : 0, kind);
+            cell.walls.push(reverse ? 1 - k % 2 : k % 2, k < 2 ? spanY : 0, kind);
             cell.ground.push(g);
           }
           cell.indices.push(offset, offset + 1, offset + 2, offset + 2, offset + 1, offset + 3);

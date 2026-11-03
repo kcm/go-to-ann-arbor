@@ -47,7 +47,8 @@ export function buildChurches(items) {
   const quad = (m, a, b, c, d, col) => { tri(m, a, b, c, col); tri(m, a, c, d, col); };
 
   for (const ch of items) {
-    const { plan, ground, height, tone } = ch;
+    const { plan, ground, minGround = ground, height, tone } = ch;
+    const base = Math.min(minGround, ground) - 0.5;
     const r = (k) => { const s = Math.sin((ch.cx * 12.9898 + ch.cz * 78.233 + k * 37.719)) * 43758.5453; return s - Math.floor(s); };
     const wall = WALLS[Math.floor(tone * WALLS.length) % WALLS.length];
     const pane = GLASS[Math.floor(r(1) * GLASS.length)];
@@ -75,7 +76,7 @@ export function buildChurches(items) {
       const out = area > 0 ? -1 : 1; // which side of each edge is outside
       for (let i = 0; i < ring.length; i++) {
         const p = ring[i], q = ring[(i + 1) % ring.length];
-        quad(stone, [p.x, ground - 0.5, p.z], [q.x, ground - 0.5, q.z], [q.x, eave, q.z], [p.x, eave, p.z], wall);
+        quad(stone, [p.x, base, p.z], [q.x, base, q.z], [q.x, eave, q.z], [p.x, eave, p.z], wall);
         // tall pointed windows down each wall long enough, clear of the tower
         const dx = q.x - p.x, dz = q.z - p.z, len = Math.hypot(dx, dz);
         if (len < 5 || eave - ground < 4) continue;
@@ -139,7 +140,7 @@ export function buildChurches(items) {
       const C = [P(towerU - h2, -h2, 0), P(towerU + h2, -h2, 0), P(towerU + h2, h2, 0), P(towerU - h2, h2, 0)];
       for (let i = 0; i < 4; i++) {
         const a = C[i], b = C[(i + 1) % 4];
-        quad(stone, [a[0], ground - 0.5, a[2]], [b[0], ground - 0.5, b[2]], [b[0], towerTop, b[2]], [a[0], towerTop, a[2]], wall);
+        quad(stone, [a[0], base, a[2]], [b[0], base, b[2]], [b[0], towerTop, b[2]], [a[0], towerTop, a[2]], wall);
         // the belfry: an arched louvered opening on each face
         const mx = (a[0] + b[0]) / 2, mz = (a[2] + b[2]) / 2;
         const ex = (b[0] - a[0]) / tw, ez = (b[2] - a[2]) / tw;

@@ -164,7 +164,7 @@ const boxCoverage = Fn(([x, a, b, s]) => {
   return clamp(min(xv.add(sv), b).sub(max(xv.sub(sv), a)).div(sv.mul(2.0)), 0.0, 1.0);
 });
 
-// Keep distant lit windows in 1–2 pixel clusters. Adjacent world-anchored scales cross-fade, and
+// Keep distant lit windows in 1-2 pixel clusters. Adjacent world-anchored scales cross-fade, and
 // the half-width inset leaves room for filtering at cell edges while preserving mean brightness.
 const distantWindowLight = Fn(([grid, fw, probability, seed, lod]) => {
   const light = float(probability).toVar();
@@ -458,8 +458,9 @@ function facadeCell(windowWidth, floorHeight, boxLocal, cornerPier = 0, footprin
   const cellUV = vec2(fract(gridU), fract(gridV));
   const fw = vec2(fwidth(gridU), fwidth(gridV));
 
-  // Ground floor is strictly floor index 0 (gridV < 1.0) so floor 1 is never sliced in half!
-  const floor0 = float(1.0).sub(step(1.0, gridV));
+  // Ground floor is strictly floor index 0 (0.0 <= gridV < 1.0) so floor 1 is never sliced in half and
+  // hillside foundation walls below ground (gridV < 0) are never mistaken for ground-floor storefronts/windows!
+  const floor0 = step(0.0, gridV).mul(float(1.0).sub(step(1.0, gridV)));
   const wall = float(1.0).sub(isRoof);
   // Lamp: a shop wall's ground floor is its storefront (createStorefront); every other ground floor has the same
   // windows as the floors above, with a building's entrance set into it (createBuildingEntrance)
@@ -1066,9 +1067,10 @@ function createPreWarBuildingMaterial(opts = {}) {
     });
 
     const wallTint = mix(mix(cStone, backTint, back), signPaint.xyz, signPaint.w);
-    // Trim stone on the band courses, the storefront fascia and the coping capping every wall
+    // Trim stone on the band courses, the storefront fascia, the coping capping every wall, and the hillside foundation plinth
     const trimMix = max(isCornice.mul(0.62), coping.mul(0.8));
-    const masonryTint = mix(wallTint, cTrim, trimMix)
+    const foundationPlinth = float(1.0).sub(smoothstep(0.18, 0.24, vCoord)).mul(wall);
+    const masonryTint = mix(mix(wallTint, cTrim, trimMix), mix(cTrim, cStone, 0.35).mul(0.78), foundationPlinth)
       .mul(brickRnd.mul(0.14).add(1.0))
       .mul(brickShiftVec);
     const masonryWithMortar = mix(masonryTint, masonryTint.mul(0.62), mortarJoint);
@@ -2343,7 +2345,7 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillStyle = '#ffdf78';
     ctx.font = '800 18px Inter, Arial, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('★  BROADWAY MUSICAL SPECTACULAR  ★', 256, 46);
+    ctx.fillText('\u2605  BROADWAY MUSICAL SPECTACULAR  \u2605', 256, 46);
 
     ctx.fillStyle = '#ffffff';
     ctx.font = '900 44px Inter, Arial, sans-serif';
@@ -2361,7 +2363,7 @@ function createBillboardCanvasTexture(themeKey) {
 
     ctx.fillStyle = '#fff3c4';
     ctx.font = '800 20px Inter, Arial, sans-serif';
-    ctx.fillText('★★★★★  "UNFORGETTABLE!" — NY TIMES', 256, 185);
+    ctx.fillText('\u2605\u2605\u2605\u2605\u2605  "UNFORGETTABLE!" \u2014 NY TIMES', 256, 185);
 
     ctx.fillStyle = '#ffae42';
     ctx.font = '700 16px JetBrains Mono, monospace';
@@ -2541,7 +2543,7 @@ function createBillboardCanvasTexture(themeKey) {
     ctx.fillStyle = '#ffd15c';
     ctx.textAlign = 'right';
     ctx.font = '800 22px JetBrains Mono, monospace';
-    ctx.fillText('NYC 72°F ☀', 492, 33);
+    ctx.fillText('NYC 72°F \u2600', 492, 33);
 
     // Center headline graphic
     ctx.fillStyle = '#ffffff';
@@ -3105,7 +3107,7 @@ function createWaterMaterial() {
         const sV = tHit.mul(sigma2).add(fwH).add(0.5).toVar();
         const sU = tHit.mul(sigma2).mul(max(viewDir.y, 0.05)).add(fwU).add(0.3).toVar();
 
-        // Lots 24 m wide with heights 0.3–1.3× the district skyline (averaged once a footprint spans several lots)
+        // Lots 24 m wide with heights 0.3-1.3× the district skyline (averaged once a footprint spans several lots)
         const lot = floor(u.div(24.0));
         const r1 = hash2D(vec2(lot, 5.1));
         const r2 = hash2D(vec2(lot, 9.7));

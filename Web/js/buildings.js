@@ -455,39 +455,57 @@ function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasSta
     if (b.height < 10 && insideCanopy(canopies, b.cx, b.cz)) continue;
     const rand = mulberry32(Math.round(b.cx * 31 + b.cz * 17));
     const tone = rand();
-    // Lamp: houses, garages and sheds are drawn as houses (houses.js): siding, windows, a door, a pitched roof
+    // Lamp: houses, garages and sheds are drawn as houses (houses.js): siding, windows, a door, a pitched roof.
+    // Use actual polygon footprint area (not axis-aligned bounding box, which inflates rotated buildings by up to 2x).
     const span = (b.maxX - b.minX) * (b.maxZ - b.minZ);
+    let polyArea = 0;
+    let minGround = groundHeight(b.cx, b.cz), maxGround = minGround;
+    for (const polygon of b.polygons) {
+      const ring = polygon.outer;
+      let a = 0;
+      for (let i = 0, n = ring.length; i < n; i++) {
+        const p = ring[i], q = ring[(i + 1) % n];
+        a += p.x * q.z - q.x * p.z;
+        const hp = groundHeight(p.x, p.z), hm = groundHeight((p.x + q.x) * 0.5, (p.z + q.z) * 0.5);
+        if (hp < minGround) minGround = hp;
+        if (hp > maxGround) maxGround = hp;
+        if (hm < minGround) minGround = hm;
+        if (hm > maxGround) maxGround = hm;
+      }
+      polyArea += Math.abs(a) * 0.5;
+    }
+    if (!polyArea) polyArea = span;
     // Lamp: a sizeable building on a religious parcel is drawn as a church (churches.js): gable, bell tower, spire
-    const plan = (b.kind || 1) !== 5 && span > 150 && b.height >= 7 && b.height < 40
+    const plan = (b.kind || 1) !== 5 && polyArea > 150 && b.height >= 7 && b.height < 40
       && landUseAt(b.cx, b.cz) === LAND_USE.RELIGIOUS ? churchPlan(b) : null;
     if (plan) {
-      let ground = groundHeight(b.cx, b.cz);
-      for (const polygon of b.polygons) for (const p of polygon.outer) ground = Math.min(ground, groundHeight(p.x, p.z));
+      const ground = maxGround + 0.28;
       b.ground = ground;
-      churches.push({ ...b, tone, ground, plan });
+      b.minGround = minGround;
+      churches.push({ ...b, tone, ground, minGround, plan });
       const detail = { cx: b.cx, cz: b.cz, minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ, cornices: [],
         waterTowers: [], hvacUnits: [], fireEscapes: [], awnings: [], scaffoldSheds: [], footprints: [] };
       for (const polygon of b.polygons) {
         const xs = polygon.outer.map((p) => p.x), zs = polygon.outer.map((p) => p.z);
         colliders.push({ minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs),
-          minY: ground, maxY: ground + b.height + 0.22, polygon });
+          minY: minGround, maxY: ground + b.height + 0.22, polygon });
         detail.footprints.push({ h: b.height + 0.22, pts: polygon.outer, holes: polygon.holes });
       }
       quadtree.insert(detail);
       allBlocks.push(detail);
       continue;
     }
-    const smallShed = span < 70 && b.height < 6;
-    if (((b.kind || 1) === 1 && b.height < 14 && span < 900) || smallShed) {
-      let ground = groundHeight(b.cx, b.cz);
-      for (const polygon of b.polygons) for (const p of polygon.outer) ground = Math.min(ground, groundHeight(p.x, p.z));
+    const smallShed = polyArea < 70 && b.height < 6;
+    if (((b.kind || 1) === 1 && b.height < 14 && polyArea < 900) || smallShed) {
+      const ground = maxGround + 0.28;
       b.ground = ground;
-      const record = { ...b, tone, ground, garage: smallShed && (b.kind || 1) !== 1 };
+      b.minGround = minGround;
+      const record = { ...b, tone, ground, minGround, garage: smallShed && (b.kind || 1) !== 1 };
       houseRecords.push(record);
       for (const polygon of b.polygons) {
         const xs = polygon.outer.map((p) => p.x), zs = polygon.outer.map((p) => p.z);
         const collider = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs),
-          minY: ground, maxY: ground + b.height + 0.22, polygon };
+          minY: minGround, maxY: ground + b.height + 0.22, polygon };
         record.collider ||= collider; // houses.js gives it its roofs' shapes, for the helicopter to land on
         colliders.push(collider);
       }
@@ -511,15 +529,16 @@ function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasSta
     if (kind !== 5 && historicDistrictAt(b.cx, b.cz) && b.height < 30) mat = tone < 0.68 ? 1 : 0;
     else if (use === LAND_USE.RELIGIOUS && kind !== 5) mat = tone < 0.5 ? 0 : 1;
     else if (use === LAND_USE.INDUSTRY && kind !== 5 && b.height < 20) mat = tone < 0.7 ? 10 : 3;
-    // Lamp: the building stands on the lowest ground under its outline (terrain.js), and its details with it
-    let ground = groundHeight(b.cx, b.cz);
-    for (const polygon of b.polygons) for (const p of polygon.outer) ground = Math.min(ground, groundHeight(p.x, p.z));
+    // Lamp: the building's first-floor doors and windows sit above the uphill grade (`maxGround`), while its foundation
+    // base extends below `minGround` so hillside walls never sink doors underground or float in mid-air
+    const ground = maxGround + 0.08;
     b.ground = ground;
+    b.minGround = minGround;
     // Lamp: storefronts (tsl-materials.js) where the survey or the city says shops: a shop building, or a shop or
     // mixed-use parcel, not the University's own or a house-style one
     const storefronts = b.height >= 6 && kind !== 5 && (mat < 5 || mat > 7)
       && (kind === 2 || use === LAND_USE.SHOPS || use === LAND_USE.MIXED_USE);
-    const record = { ...b, tone, ground, storefronts };
+    const record = { ...b, tone, ground, minGround, storefronts };
     surveyedBuckets[mat].push(record);
     const detail = {
       cx: b.cx, cz: b.cz, minX: b.minX, maxX: b.maxX, minZ: b.minZ, maxZ: b.maxZ,
@@ -529,7 +548,7 @@ function buildCityBlocks(scene, landmarkColliders = [], addresses = null, gasSta
     for (const polygon of b.polygons) {
       const xs = polygon.outer.map((p) => p.x), zs = polygon.outer.map((p) => p.z);
       const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
-      colliders.push({ minX, maxX, minZ, maxZ, minY: ground, maxY: ground + top, polygon });
+      colliders.push({ minX, maxX, minZ, maxZ, minY: minGround, maxY: ground + top, polygon });
       detail.footprints.push({ h: top, pts: polygon.outer, holes: polygon.holes });
     }
     const neighbours = nearbyReserves(b, 6);
